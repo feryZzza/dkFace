@@ -123,13 +123,30 @@ bool captureFaceSamples(std::vector<cv::Mat>& samples, int sampleCount, std::str
     cv::CascadeClassifier cascade;
     if (!loadFaceCascade(cascade, message)) return false;
 
-    cv::VideoCapture camera(0);
+    cv::VideoCapture camera;
+    if (!camera.open(0, cv::CAP_V4L2)) {
+        camera.open(0);
+    }
     if (!camera.isOpened()) {
         message = "无法打开摄像头，请检查摄像头权限或设备连接";
         return false;
     }
+    camera.set(cv::CAP_PROP_BUFFERSIZE, 1);
+    camera.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+    camera.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
 
     bool showWindow = hasDisplay();
+    if (showWindow) {
+        cv::namedWindow("face attendance", cv::WINDOW_AUTOSIZE);
+        cv::startWindowThread();
+    }
+
+    for (int i = 0; i < 10; ++i) {
+        cv::Mat warmupFrame;
+        camera >> warmupFrame;
+        if (showWindow) cv::waitKey(20);
+    }
+
     int stableCount = 0;
     int framesSinceSample = SAMPLE_INTERVAL_FRAMES;
 
@@ -257,14 +274,41 @@ void loadTrainingSet(std::vector<cv::Mat>& images, std::vector<int>& labels,
 
 }  // namespace
 
-bool enrollFace(const std::string& employeeId, std::string& message) {
+int enrollFaceSampleCount() {
+    return ENROLL_SAMPLE_COUNT;
+}
+
+int recognizeFaceSampleCount() {
+    return RECOGNIZE_SAMPLE_COUNT;
+}
+
+bool loadFaceCascadeForCapture(cv::CascadeClassifier& cascade, std::string& message) {
+    return loadFaceCascade(cascade, message);
+}
+
+bool findLargestFaceForCapture(const cv::Mat& frame, cv::CascadeClassifier& cascade,
+                               cv::Rect& face) {
+    return findLargestFace(frame, cascade, face);
+}
+
+cv::Mat normalizeFaceForCapture(const cv::Mat& frame, const cv::Rect& faceRect) {
+    return normalizeFace(frame, faceRect);
+}
+
+bool saveFaceEnrollmentSamples(const std::string& employeeId,
+                               const std::vector<cv::Mat>& faceSamples,
+                               std::string& message) {
     if (employeeId.empty()) {
         message = "录入失败：工号不能为空";
         return false;
     }
-
-    std::vector<cv::Mat> faceSamples;
-    if (!captureFaceSamples(faceSamples, ENROLL_SAMPLE_COUNT, message)) return false;
+    if (static_cast<int>(faceSamples.size()) < ENROLL_SAMPLE_COUNT) {
+        std::ostringstream output;
+        output << "人脸采集不足：需要 " << ENROLL_SAMPLE_COUNT << " 张，实际采集 "
+               << faceSamples.size() << " 张，请保持正对摄像头";
+        message = output.str();
+        return false;
+    }
 
     ensurePhotoDir();
     if (!ensureDir(sampleDir(employeeId), message)) return false;
@@ -288,9 +332,16 @@ bool enrollFace(const std::string& employeeId, std::string& message) {
     return true;
 }
 
-bool recognizeFace(std::string& employeeId, double& score, std::string& message) {
-    std::vector<cv::Mat> currentFaces;
-    if (!captureFaceSamples(currentFaces, RECOGNIZE_SAMPLE_COUNT, message)) return false;
+bool recognizeFaceSamples(const std::vector<cv::Mat>& currentFaces,
+                          std::string& employeeId, double& score,
+                          std::string& message) {
+    if (static_cast<int>(currentFaces.size()) < RECOGNIZE_SAMPLE_COUNT) {
+        std::ostringstream output;
+        output << "人脸采集不足：需要 " << RECOGNIZE_SAMPLE_COUNT << " 张，实际采集 "
+               << currentFaces.size() << " 张，请保持正对摄像头";
+        message = output.str();
+        return false;
+    }
 
     std::vector<cv::Mat> trainingImages;
     std::vector<int> labels;
@@ -371,6 +422,25 @@ bool recognizeFace(std::string& employeeId, double& score, std::string& message)
            << "，有效帧: " << acceptedVotes << "/" << currentFaces.size();
     message = output.str();
     return true;
+}
+
+bool enrollFace(const std::string& employeeId, std::string& message) {
+    if (employeeId.empty()) {
+        message = "录入失败：工号不能为空";
+        return false;
+    }
+
+    std::vector<cv::Mat> faceSamples;
+    if (!captureFaceSamples(faceSamples, ENROLL_SAMPLE_COUNT, message)) return false;
+
+    return saveFaceEnrollmentSamples(employeeId, faceSamples, message);
+}
+
+bool recognizeFace(std::string& employeeId, double& score, std::string& message) {
+    std::vector<cv::Mat> currentFaces;
+    if (!captureFaceSamples(currentFaces, RECOGNIZE_SAMPLE_COUNT, message)) return false;
+
+    return recognizeFaceSamples(currentFaces, employeeId, score, message);
 }
 
 }  // namespace face

@@ -1,6 +1,6 @@
 #include "client.hpp"
 
-#include "face_recognition.hpp"
+#include "../include/face_recognition.hpp"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -483,6 +483,11 @@ bool isClientCommandName(const std::string& value) {
            value == "normal" ||
            value == "delete" ||
            value == "list";
+}
+
+std::string sendClientRequest(const std::string& host, int port,
+                              const std::string& request) {
+    return sendRequestToServer(host, port, request);
 }
 
 int runClient(const std::string& host, int port) {

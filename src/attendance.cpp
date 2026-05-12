@@ -1,4 +1,4 @@
-#include "attendance.hpp"
+#include "../include/attendance.hpp"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -565,6 +565,10 @@ std::string listAttendanceRecords() {
 
 std::string processRequest(const std::string& line) {
     Request request = parseRequest(line);
+    if (request.type == "CLIENT_PING") {
+        return "服务器连接正常";
+    }
+
     // 服务端可能同时处理多个客户端连接，文件读写用互斥锁保护。
     std::lock_guard<std::mutex> lock(g_dataMutex);
     std::map<std::string, Employee> employees = loadEmployees();

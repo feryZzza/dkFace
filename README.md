@@ -4,7 +4,7 @@
 
 ## 编译
 
-依赖 OpenCV 4，用于摄像头采集和人脸检测。当前 CMake 会通过 `find_package(OpenCV REQUIRED)` 查找本机 OpenCV。
+依赖 OpenCV 4 和 Qt5 Widgets。OpenCV 用于摄像头采集和人脸检测，Qt 用于服务端和客户端图形界面。当前 CMake 会通过 `find_package(OpenCV REQUIRED)` 和 `find_package(Qt5 COMPONENTS Widgets REQUIRED)` 查找本机依赖。
 
 ```bash
 cmake -S . -B build
@@ -15,9 +15,24 @@ cmake --build build
 
 ```bash
 ./build/main
+./build/server_gui
+./build/client_gui
 ```
 
 ## 运行方法
+
+### 图形化界面
+
+推荐先启动服务端界面，再启动客户端界面：
+
+```bash
+./build/server_gui
+./build/client_gui
+```
+
+服务端界面可以启动/停止监听、设置服务端统一打卡日期和时间、查看 `kaoqin.csv` 中的全部考勤记录，并实时显示客户端请求日志。客户端界面提供员工注册、手动打卡、人脸录入、刷脸打卡、刷脸查询工资、激励计划切换和删除员工等入口。
+
+### 命令行界面
 
 先启动服务端。打卡日期和打卡时间都可以由服务端统一决定，测试时可以在服务端启动参数中指定 2026 年内的日期和时间：
 
@@ -84,6 +99,7 @@ list
 - `face_register`：调用摄像头检测人脸，保存 `photos/工号.png` 主模板和 `photos/工号/` 多帧样本，然后向服务端注册员工。
 - `face_mark`：调用摄像头识别人脸，识别成功后自动发送 `CLIENT_MARK` 打卡消息。
 - `face_query`：调用摄像头识别人脸，识别成功后自动发送 `CLIENT_QUERY` 查询工资消息。
+- `CLIENT_PING`：客户端测试服务端连通性，只返回服务状态，不读写员工考勤数据。
 - `CLIENT_MARK`：打卡。普通员工 9:00 前有效，超过时间记缺勤；打卡日期由服务端统一设置，服务端时间覆盖客户端时间。
 - `CLIENT_QUERY`：查询工资。工资分段结算：普通阶段始终按 `勤奋数 * 500 - 缺勤数 * 300`，激励阶段始终按 `勤奋数 * 1000 - 缺勤数 * 1000`，再加当前计划基础工资。
 - `CLIENT_HARDWORK`：加入激励计划。客户端刷脸确认后发送，打卡时间改为 7:00，基础工资改为 8000，奖惩金额改为 1000。
@@ -116,6 +132,8 @@ list
 - `include/client.hpp` / `src/client.cpp`：客户端命令解析和 TCP 请求发送。
 - `include/face_recognition.hpp` / `src/face_recognition.cpp`：OpenCV 摄像头采集、Haar 人脸检测、LBPH 模板录入和多帧匹配。
 - `include/server.hpp` / `src/server.cpp`：服务端监听、接收客户端连接并调用考勤业务模块。
+- `src/server_gui.cpp`：Qt 服务端图形界面，封装可启动/停止的 TCP 监听、时间设置、记录查看和服务日志。
+- `src/client_gui.cpp`：Qt 客户端图形界面，封装注册、打卡、刷脸、计划切换和删除等用户操作。
 
 ## 简易人脸识别说明
 
