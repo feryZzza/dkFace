@@ -563,6 +563,13 @@ std::string listAttendanceRecords() {
     return handleList(loadEmployees());
 }
 
+std::string queryAttendanceRecord(const std::string& employeeId) {
+    std::lock_guard<std::mutex> lock(g_dataMutex);
+    Request request;
+    request.id = trim(employeeId);
+    return handleQuery(loadEmployees(), request);
+}
+
 std::string processRequest(const std::string& line) {
     Request request = parseRequest(line);
     if (request.type == "CLIENT_PING") {

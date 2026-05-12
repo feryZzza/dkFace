@@ -88,6 +88,8 @@ void handleServerConsole() {
             std::string message;
             setAttendanceDateTimeOverride(dateText, timeText, message);
             std::cout << message << std::endl;
+        } else if (command == "query") {
+            std::cout << queryAttendanceRecord(dateText) << std::endl;
         } else if (command == "list") {
             std::cout << listAttendanceRecords() << std::endl;
         } else if (command == "help") {
@@ -96,6 +98,7 @@ void handleServerConsole() {
                 << "  date 2026-MM-DD  修改后续打卡日期\n"
                 << "  time HH:MM       修改后续打卡时间\n"
                 << "  now 2026-MM-DD HH:MM  同时修改日期和时间\n"
+                << "  query 工号       查询指定员工情况\n"
                 << "  list             查看全部考勤记录\n"
                 << "  date             清除日期覆盖\n"
                 << "  time             清除时间覆盖"
@@ -274,7 +277,7 @@ int runServer(int port, const std::string& dateOverride,
     std::cout << "考勤服务器已启动，端口 " << port
               << "，数据文件 kaoqin.csv，" << dateMessage
               << "，" << timeMessage << std::endl;
-    std::cout << "服务端命令：date 2026-MM-DD，time HH:MM，now 2026-MM-DD HH:MM，list"
+    std::cout << "服务端命令：date 2026-MM-DD，time HH:MM，now 2026-MM-DD HH:MM，query 工号，list"
               << std::endl;
     std::thread(handleServerConsole).detach();
 

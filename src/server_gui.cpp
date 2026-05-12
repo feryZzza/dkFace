@@ -12,6 +12,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPointer>
@@ -128,7 +129,7 @@ class ServerWindow : public QWidget {
 public:
     explicit ServerWindow(QWidget* parent = NULL) : QWidget(parent) {
         setWindowTitle(QStringLiteral("人脸考勤服务端"));
-        resize(1120, 780);
+        resize(1600, 1000);
 
         QVBoxLayout* root = new QVBoxLayout(this);
         root->setContentsMargins(22, 20, 22, 20);
@@ -168,9 +169,9 @@ public:
             " border-radius: 8px; margin-top: 12px; padding: 14px; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px;"
             " color: #374151; background: #f6f8fb; }"
-            "QSpinBox, QDateEdit, QTimeEdit { background: #ffffff; min-height: 32px;"
+            "QLineEdit, QSpinBox, QDateEdit, QTimeEdit { background: #ffffff; min-height: 32px;"
             " padding: 3px 8px; border: 1px solid #c9d1d9; border-radius: 5px; }"
-            "QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus { border: 1px solid #0969da; }"
+            "QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus { border: 1px solid #0969da; }"
             "QCheckBox { spacing: 8px; }"
             "QPushButton { min-height: 34px; padding: 5px 14px; border-radius: 5px;"
             " border: 1px solid #c9d1d9; background: #ffffff; color: #24292f;"
@@ -292,6 +293,17 @@ private:
     QWidget* createRecordsBox() {
         QGroupBox* box = new QGroupBox(QStringLiteral("考勤记录"), this);
         QVBoxLayout* layout = new QVBoxLayout(box);
+
+        QHBoxLayout* queryRow = new QHBoxLayout;
+        queryIdEdit_ = new QLineEdit(box);
+        queryIdEdit_->setPlaceholderText(QStringLiteral("输入员工工号"));
+        QPushButton* queryButton = actionButton(QStringLiteral("查询个人情况"),
+                                                QStyle::SP_FileDialogDetailedView,
+                                                box, "accent");
+        queryRow->addWidget(new QLabel(QStringLiteral("工号"), box));
+        queryRow->addWidget(queryIdEdit_, 1);
+        queryRow->addWidget(queryButton);
+
         recordsEdit_ = new QTextEdit(box);
         recordsEdit_->setReadOnly(true);
         recordsEdit_->setLineWrapMode(QTextEdit::NoWrap);
@@ -302,8 +314,10 @@ private:
                                                   QStyle::SP_BrowserReload, box);
         buttons->addStretch(1);
         buttons->addWidget(refreshButton);
+        connect(queryButton, &QPushButton::clicked, this, [this]() { queryRecord(); });
         connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshRecords(); });
 
+        layout->addLayout(queryRow);
         layout->addWidget(recordsEdit_);
         layout->addLayout(buttons);
         return box;
@@ -315,7 +329,7 @@ private:
         logEdit_ = new QTextEdit(box);
         logEdit_->setReadOnly(true);
         logEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
-        logEdit_->setPlaceholderText(QStringLiteral("服务事件会显示在这里"));
+        logEdit_->setPlaceholderText(QStringLiteral("当前暂无服务事件"));
 
         QHBoxLayout* buttons = new QHBoxLayout;
         QPushButton* clearButton = actionButton(QStringLiteral("清空日志"),
@@ -397,6 +411,20 @@ private:
         recordsEdit_->setPlainText(toQString(face::listAttendanceRecords()));
     }
 
+    void queryRecord() {
+        QString idText = queryIdEdit_->text().trimmed();
+        if (idText.isEmpty()) {
+            appendLog(QStringLiteral("查询失败：工号不能为空"), FeedbackError);
+            queryIdEdit_->setFocus();
+            return;
+        }
+
+        QString result = toQString(face::queryAttendanceRecord(toStdString(idText)));
+        recordsEdit_->setPlainText(result);
+        appendLog(QStringLiteral("查询工号 %1\n%2").arg(idText).arg(result),
+                  classifyServerMessage(result));
+    }
+
     void appendLog(const QString& text, FeedbackKind kind = FeedbackInfo) {
         const QString stamp =
             QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
@@ -451,6 +479,7 @@ private:
     QDateEdit* dateEdit_;
     QCheckBox* timeCheck_;
     QTimeEdit* timeEdit_;
+    QLineEdit* queryIdEdit_;
     QTextEdit* recordsEdit_;
     QTextEdit* logEdit_;
 };

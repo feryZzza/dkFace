@@ -377,7 +377,7 @@ class ClientWindow : public QWidget {
 public:
     explicit ClientWindow(QWidget* parent = NULL) : QWidget(parent), busy_(false) {
         setWindowTitle(QStringLiteral("人脸考勤客户端"));
-        resize(1080, 760);
+        resize(1600, 1000);
 
         QVBoxLayout* root = new QVBoxLayout(this);
         root->setContentsMargins(22, 20, 22, 20);
@@ -714,7 +714,7 @@ private:
         logEdit_ = new QTextEdit(box);
         logEdit_->setReadOnly(true);
         logEdit_->setMinimumHeight(190);
-        logEdit_->setPlaceholderText(QStringLiteral("操作反馈会显示在这里"));
+        logEdit_->setPlaceholderText(QStringLiteral("当前暂无操作反馈"));
 
         QHBoxLayout* buttons = new QHBoxLayout;
         QPushButton* clearButton =

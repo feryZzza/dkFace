@@ -13,6 +13,7 @@ bool setAttendanceDateTimeOverride(const std::string& dateText,
                                    const std::string& timeText,
                                    std::string& message);
 std::string listAttendanceRecords();
+std::string queryAttendanceRecord(const std::string& employeeId);
 std::string processRequest(const std::string& line);
 
 }  // namespace face
