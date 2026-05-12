@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStyle>
+#include <QTextCursor>
 #include <QTextEdit>
 #include <QTime>
 #include <QTimeEdit>
@@ -29,6 +30,13 @@
 
 namespace {
 
+enum FeedbackKind {
+    FeedbackInfo,
+    FeedbackSuccess,
+    FeedbackWarning,
+    FeedbackError
+};
+
 QString toQString(const std::string& text) {
     return QString::fromUtf8(text.c_str());
 }
@@ -37,15 +45,102 @@ std::string toStdString(const QString& text) {
     return text.trimmed().toUtf8().constData();
 }
 
+QString escapedHtml(const QString& text) {
+    return text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+}
+
+const char* feedbackState(FeedbackKind kind) {
+    switch (kind) {
+        case FeedbackSuccess:
+            return "ok";
+        case FeedbackWarning:
+            return "warning";
+        case FeedbackError:
+            return "error";
+        case FeedbackInfo:
+        default:
+            return "info";
+    }
+}
+
+QString feedbackText(FeedbackKind kind) {
+    switch (kind) {
+        case FeedbackSuccess:
+            return QStringLiteral("完成");
+        case FeedbackWarning:
+            return QStringLiteral("注意");
+        case FeedbackError:
+            return QStringLiteral("失败");
+        case FeedbackInfo:
+        default:
+            return QStringLiteral("事件");
+    }
+}
+
+QString feedbackColor(FeedbackKind kind) {
+    switch (kind) {
+        case FeedbackSuccess:
+            return QStringLiteral("#1f7a4d");
+        case FeedbackWarning:
+            return QStringLiteral("#9a6700");
+        case FeedbackError:
+            return QStringLiteral("#b42318");
+        case FeedbackInfo:
+        default:
+            return QStringLiteral("#0969da");
+    }
+}
+
+QString feedbackBackground(FeedbackKind kind) {
+    switch (kind) {
+        case FeedbackSuccess:
+            return QStringLiteral("#ecfdf3");
+        case FeedbackWarning:
+            return QStringLiteral("#fff8c5");
+        case FeedbackError:
+            return QStringLiteral("#ffebe9");
+        case FeedbackInfo:
+        default:
+            return QStringLiteral("#ddf4ff");
+    }
+}
+
+FeedbackKind classifyServerMessage(const QString& text) {
+    if (text.contains(QStringLiteral("失败")) ||
+        text.contains(QStringLiteral("错误")) ||
+        text.contains(QStringLiteral("无法"))) {
+        return FeedbackError;
+    }
+    if (text.contains(QStringLiteral("停止")) ||
+        text.contains(QStringLiteral("缺勤")) ||
+        text.contains(QStringLiteral("超过"))) {
+        return FeedbackWarning;
+    }
+    if (text.contains(QStringLiteral("启动")) ||
+        text.contains(QStringLiteral("成功")) ||
+        text.contains(QStringLiteral("已设置"))) {
+        return FeedbackSuccess;
+    }
+    return FeedbackInfo;
+}
+
 class ServerWindow : public QWidget {
 public:
     explicit ServerWindow(QWidget* parent = NULL) : QWidget(parent) {
         setWindowTitle(QStringLiteral("人脸考勤服务端"));
-        resize(1040, 760);
+        resize(1120, 780);
 
         QVBoxLayout* root = new QVBoxLayout(this);
-        root->setContentsMargins(18, 18, 18, 18);
-        root->setSpacing(12);
+        root->setContentsMargins(22, 20, 22, 20);
+        root->setSpacing(14);
+
+        QLabel* title = new QLabel(QStringLiteral("人脸考勤服务端"), this);
+        title->setObjectName(QStringLiteral("pageTitle"));
+        QLabel* subtitle =
+            new QLabel(QStringLiteral("监听客户端请求、维护考勤记录和统一打卡时间"), this);
+        subtitle->setObjectName(QStringLiteral("pageSubtitle"));
+        root->addWidget(title);
+        root->addWidget(subtitle);
 
         root->addWidget(createServerBox());
 
@@ -65,13 +160,45 @@ public:
         refreshRecords();
 
         setStyleSheet(
-            "QWidget { font-size: 14px; }"
-            "QGroupBox { font-weight: 600; border: 1px solid #d0d7de;"
-            " border-radius: 6px; margin-top: 10px; padding-top: 10px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }"
-            "QSpinBox, QDateEdit, QTimeEdit { min-height: 30px; padding: 2px 6px; }"
-            "QPushButton { min-height: 32px; padding: 4px 12px; border-radius: 4px; }"
-            "QTextEdit { border: 1px solid #d0d7de; border-radius: 6px; }");
+            "QWidget { background: #f6f8fb; color: #1f2937; font-size: 14px; }"
+            "QLabel#pageTitle { font-size: 24px; font-weight: 700; color: #111827; }"
+            "QLabel#pageSubtitle { color: #6b7280; padding-bottom: 2px; }"
+            "QLabel#sectionTitle { color: #374151; font-weight: 700; padding-top: 4px; }"
+            "QGroupBox { background: #ffffff; font-weight: 600; border: 1px solid #d0d7de;"
+            " border-radius: 8px; margin-top: 12px; padding: 14px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px;"
+            " color: #374151; background: #f6f8fb; }"
+            "QSpinBox, QDateEdit, QTimeEdit { background: #ffffff; min-height: 32px;"
+            " padding: 3px 8px; border: 1px solid #c9d1d9; border-radius: 5px; }"
+            "QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus { border: 1px solid #0969da; }"
+            "QCheckBox { spacing: 8px; }"
+            "QPushButton { min-height: 34px; padding: 5px 14px; border-radius: 5px;"
+            " border: 1px solid #c9d1d9; background: #ffffff; color: #24292f;"
+            " font-weight: 600; }"
+            "QPushButton:hover { background: #f3f4f6; }"
+            "QPushButton:pressed { background: #eaeef2; }"
+            "QPushButton:disabled { color: #8c959f; background: #f6f8fa; }"
+            "QPushButton[role=\"primary\"] { background: #1f7a4d; border-color: #1f7a4d;"
+            " color: #ffffff; }"
+            "QPushButton[role=\"primary\"]:hover { background: #17623d; }"
+            "QPushButton[role=\"accent\"] { background: #0969da; border-color: #0969da;"
+            " color: #ffffff; }"
+            "QPushButton[role=\"accent\"]:hover { background: #0757b8; }"
+            "QPushButton[role=\"danger\"] { background: #b42318; border-color: #b42318;"
+            " color: #ffffff; }"
+            "QPushButton[role=\"danger\"]:hover { background: #912018; }"
+            "QLabel#statusBadge { border-radius: 12px; padding: 5px 12px;"
+            " font-weight: 600; border: 1px solid transparent; }"
+            "QLabel#statusBadge[state=\"idle\"] { color: #57606a; background: #f6f8fa;"
+            " border-color: #d0d7de; }"
+            "QLabel#statusBadge[state=\"ok\"] { color: #1f7a4d; background: #ecfdf3;"
+            " border-color: #8ee0ad; }"
+            "QLabel#statusBadge[state=\"warning\"] { color: #9a6700; background: #fff8c5;"
+            " border-color: #eac54f; }"
+            "QLabel#statusBadge[state=\"error\"] { color: #b42318; background: #ffebe9;"
+            " border-color: #ffaba8; }"
+            "QTextEdit { background: #ffffff; border: 1px solid #d0d7de;"
+            " border-radius: 8px; padding: 8px; }");
     }
 
 protected:
@@ -81,6 +208,13 @@ protected:
     }
 
 private:
+    QPushButton* actionButton(const QString& text, QStyle::StandardPixmap icon,
+                              QWidget* parent, const char* role = "secondary") {
+        QPushButton* button = new QPushButton(style()->standardIcon(icon), text, parent);
+        button->setProperty("role", role);
+        return button;
+    }
+
     QWidget* createServerBox() {
         QGroupBox* box = new QGroupBox(QStringLiteral("服务控制"), this);
         QVBoxLayout* outer = new QVBoxLayout(box);
@@ -90,13 +224,14 @@ private:
         portSpin_->setRange(1, 65535);
         portSpin_->setValue(face::DEFAULT_PORT);
         statusLabel_ = new QLabel(QStringLiteral("服务未启动"), box);
+        statusLabel_->setObjectName(QStringLiteral("statusBadge"));
+        statusLabel_->setMinimumWidth(230);
+        setStatus(QStringLiteral("服务未启动"), "idle");
 
-        startButton_ =
-            new QPushButton(style()->standardIcon(QStyle::SP_MediaPlay),
-                            QStringLiteral("启动服务"), box);
-        stopButton_ =
-            new QPushButton(style()->standardIcon(QStyle::SP_MediaStop),
-                            QStringLiteral("停止服务"), box);
+        startButton_ = actionButton(QStringLiteral("启动服务"), QStyle::SP_MediaPlay,
+                                    box, "primary");
+        stopButton_ = actionButton(QStringLiteral("停止服务"), QStyle::SP_MediaStop,
+                                   box, "danger");
 
         firstRow->addWidget(new QLabel(QStringLiteral("监听端口"), box));
         firstRow->addWidget(portSpin_);
@@ -104,8 +239,12 @@ private:
         firstRow->addWidget(stopButton_);
         firstRow->addWidget(statusLabel_, 1);
 
-        QGroupBox* overrideBox = new QGroupBox(QStringLiteral("打卡日期与时间"), box);
-        QFormLayout* overrideForm = new QFormLayout(overrideBox);
+        QWidget* overrideBox = new QWidget(box);
+        QVBoxLayout* overrideLayout = new QVBoxLayout(overrideBox);
+        overrideLayout->setContentsMargins(0, 8, 0, 0);
+        QLabel* overrideTitle = new QLabel(QStringLiteral("打卡日期与时间"), overrideBox);
+        overrideTitle->setObjectName(QStringLiteral("sectionTitle"));
+        QFormLayout* overrideForm = new QFormLayout;
         dateCheck_ = new QCheckBox(QStringLiteral("指定日期"), overrideBox);
         dateEdit_ = new QDateEdit(defaultDate(), overrideBox);
         dateEdit_->setCalendarPopup(true);
@@ -131,12 +270,14 @@ private:
         timeRow->addWidget(timeEdit_);
         timeRow->addStretch(1);
 
-        applyOverrideButton_ =
-            new QPushButton(style()->standardIcon(QStyle::SP_DialogApplyButton),
-                            QStringLiteral("应用设置"), overrideBox);
+        applyOverrideButton_ = actionButton(QStringLiteral("应用设置"),
+                                            QStyle::SP_DialogApplyButton,
+                                            overrideBox, "accent");
         overrideForm->addRow(QStringLiteral("日期"), dateRow);
         overrideForm->addRow(QStringLiteral("时间"), timeRow);
         overrideForm->addRow(applyOverrideButton_);
+        overrideLayout->addWidget(overrideTitle);
+        overrideLayout->addLayout(overrideForm);
 
         connect(startButton_, &QPushButton::clicked, this, [this]() { startServer(); });
         connect(stopButton_, &QPushButton::clicked, this, [this]() { stopServer(); });
@@ -154,11 +295,11 @@ private:
         recordsEdit_ = new QTextEdit(box);
         recordsEdit_->setReadOnly(true);
         recordsEdit_->setLineWrapMode(QTextEdit::NoWrap);
+        recordsEdit_->setPlaceholderText(QStringLiteral("暂无考勤记录"));
 
         QHBoxLayout* buttons = new QHBoxLayout;
-        QPushButton* refreshButton =
-            new QPushButton(style()->standardIcon(QStyle::SP_BrowserReload),
-                            QStringLiteral("刷新记录"), box);
+        QPushButton* refreshButton = actionButton(QStringLiteral("刷新记录"),
+                                                  QStyle::SP_BrowserReload, box);
         buttons->addStretch(1);
         buttons->addWidget(refreshButton);
         connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshRecords(); });
@@ -174,11 +315,11 @@ private:
         logEdit_ = new QTextEdit(box);
         logEdit_->setReadOnly(true);
         logEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
+        logEdit_->setPlaceholderText(QStringLiteral("服务事件会显示在这里"));
 
         QHBoxLayout* buttons = new QHBoxLayout;
-        QPushButton* clearButton =
-            new QPushButton(style()->standardIcon(QStyle::SP_DialogResetButton),
-                            QStringLiteral("清空日志"), box);
+        QPushButton* clearButton = actionButton(QStringLiteral("清空日志"),
+                                                QStyle::SP_DialogResetButton, box);
         buttons->addStretch(1);
         buttons->addWidget(clearButton);
         connect(clearButton, &QPushButton::clicked, logEdit_, &QTextEdit::clear);
@@ -212,7 +353,7 @@ private:
             const QString text = toQString(message);
             QMetaObject::invokeMethod(app, [self, text]() {
                 if (!self) return;
-                self->appendLog(text);
+                self->appendLog(text, classifyServerMessage(text));
             }, Qt::QueuedConnection);
         };
     }
@@ -221,19 +362,20 @@ private:
         std::string message;
         if (!server_.start(portSpin_->value(), selectedDateOverride(),
                            selectedTimeOverride(), message, makeLogCallback())) {
-            appendLog(QStringLiteral("启动失败：") + toQString(message));
+            appendLog(QStringLiteral("启动失败：") + toQString(message), FeedbackError);
+            setStatus(QStringLiteral("启动失败"), "error");
             QMessageBox::warning(this, QStringLiteral("启动失败"), toQString(message));
             return;
         }
 
-        statusLabel_->setText(QStringLiteral("服务运行中，端口 %1").arg(portSpin_->value()));
+        setStatus(QStringLiteral("服务运行中，端口 %1").arg(portSpin_->value()), "ok");
         updateServerControls();
         refreshRecords();
     }
 
     void stopServer() {
         server_.stop();
-        statusLabel_->setText(QStringLiteral("服务已停止"));
+        setStatus(QStringLiteral("服务已停止"), "warning");
         updateServerControls();
     }
 
@@ -243,8 +385,8 @@ private:
         bool dateOk = face::setAttendanceDateOverride(selectedDateOverride(), dateMessage);
         bool timeOk = face::setAttendanceTimeOverride(selectedTimeOverride(), timeMessage);
 
-        appendLog(toQString(dateMessage));
-        appendLog(toQString(timeMessage));
+        appendLog(toQString(dateMessage), dateOk ? FeedbackSuccess : FeedbackError);
+        appendLog(toQString(timeMessage), timeOk ? FeedbackSuccess : FeedbackError);
         if (!dateOk || !timeOk) {
             QMessageBox::warning(this, QStringLiteral("设置失败"),
                                  toQString(dateOk ? timeMessage : dateMessage));
@@ -255,10 +397,40 @@ private:
         recordsEdit_->setPlainText(toQString(face::listAttendanceRecords()));
     }
 
-    void appendLog(const QString& text) {
+    void appendLog(const QString& text, FeedbackKind kind = FeedbackInfo) {
         const QString stamp =
             QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
-        logEdit_->append(stamp + QStringLiteral("  ") + text);
+        QString html;
+        html += QStringLiteral(
+            "<div style='margin:0 0 10px 0; padding:10px 12px;"
+            "border:1px solid %1; border-left:4px solid %2;"
+            "background:%3; border-radius:6px;'>")
+                    .arg(feedbackColor(kind))
+                    .arg(feedbackColor(kind))
+                    .arg(feedbackBackground(kind));
+        html += QStringLiteral(
+            "<div style='font-size:12px; color:#57606a; margin-bottom:4px;'>%1 · %2</div>")
+                    .arg(stamp)
+                    .arg(feedbackText(kind));
+        html += QStringLiteral("<div style='color:#374151; line-height:1.45;'>%1</div>")
+                    .arg(escapedHtml(text));
+        html += QStringLiteral("</div>");
+
+        logEdit_->moveCursor(QTextCursor::End);
+        logEdit_->insertHtml(html + QStringLiteral("<br>"));
+        logEdit_->moveCursor(QTextCursor::End);
+    }
+
+    void repolish(QWidget* widget) {
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+        widget->update();
+    }
+
+    void setStatus(const QString& text, const char* state) {
+        statusLabel_->setText(text);
+        statusLabel_->setProperty("state", state);
+        repolish(statusLabel_);
     }
 
     void updateServerControls() {
