@@ -18,6 +18,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStringList>
 #include <QStyle>
 #include <QTextCursor>
 #include <QTextEdit>
@@ -27,6 +28,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -125,9 +127,176 @@ FeedbackKind classifyServerMessage(const QString& text) {
     return FeedbackInfo;
 }
 
+QStringList splitTopLevel(const QString& text, QChar delimiter) {
+    QStringList parts;
+    QString current;
+    int depth = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar ch = text.at(i);
+        if (ch == QChar('(') || ch == QChar(0xff08)) ++depth;
+        if (ch == QChar(')') || ch == QChar(0xff09)) depth = std::max(0, depth - 1);
+
+        if (ch == delimiter && depth == 0) {
+            parts << current.trimmed();
+            current.clear();
+        } else {
+            current.append(ch);
+        }
+    }
+    if (!current.trimmed().isEmpty()) parts << current.trimmed();
+    return parts;
+}
+
+QStringList attendanceFields(const QString& line) {
+    QStringList fields;
+    QStringList sections = splitTopLevel(line, QChar(0xff1b));
+    for (int i = 0; i < sections.size(); ++i) {
+        QStringList parts = splitTopLevel(sections.at(i), QChar(0xff0c));
+        for (int j = 0; j < parts.size(); ++j) {
+            QString part = parts.at(j).trimmed();
+            if (!part.isEmpty()) fields << part;
+        }
+    }
+    return fields;
+}
+
+QString fieldValue(const QStringList& fields, const QString& prefix) {
+    for (int i = 0; i < fields.size(); ++i) {
+        if (fields.at(i).startsWith(prefix)) {
+            return fields.at(i).mid(prefix.size()).trimmed();
+        }
+    }
+    return QString();
+}
+
+QString fieldRowHtml(const QString& field) {
+    int separator = field.indexOf(QChar(':'));
+    if (separator < 0) separator = field.indexOf(QChar(0xff1a));
+    if (separator < 0) {
+        return QStringLiteral(
+                   "<tr><td colspan='2' style='padding:9px 10px; color:#374151;"
+                   "border-top:1px solid #e5e7eb;'>%1</td></tr>")
+            .arg(escapedHtml(field));
+    }
+
+    QString label = field.left(separator).trimmed();
+    QString value = field.mid(separator + 1).trimmed();
+    return QStringLiteral(
+               "<tr>"
+               "<td style='width:128px; padding:9px 10px; color:#57606a;"
+               "font-weight:600; background:#f8fafc; border-top:1px solid #e5e7eb;'>%1</td>"
+               "<td style='padding:9px 10px; color:#1f2937;"
+               "background:#ffffff; border-top:1px solid #e5e7eb;'>%2</td>"
+               "</tr>")
+        .arg(escapedHtml(label))
+        .arg(escapedHtml(value));
+}
+
+QString attendanceCardHtml(const QString& line, int index) {
+    QStringList fields = attendanceFields(line);
+    QString employeeId = fieldValue(fields, QStringLiteral("工号:"));
+    QString employeeName = fieldValue(fields, QStringLiteral("姓名:"));
+    QString plan = fieldValue(fields, QStringLiteral("计划:"));
+    QString salary = fieldValue(fields, QStringLiteral("本月工资:"));
+    QString salaryPrefix;
+
+    for (int i = 0; i < fields.size(); ++i) {
+        if (fields.at(i).startsWith(QStringLiteral("本月工资额"))) {
+            salaryPrefix = fields.at(i);
+            break;
+        }
+    }
+    if (salary.isEmpty() && !salaryPrefix.isEmpty()) {
+        int pos = salaryPrefix.indexOf(QChar('='));
+        if (pos >= 0) salary = salaryPrefix.mid(pos + 1).trimmed();
+    }
+
+    QString title = QStringLiteral("员工记录 %1").arg(index + 1);
+    if (!employeeId.isEmpty()) title = QStringLiteral("工号 %1").arg(employeeId);
+    if (!employeeName.isEmpty()) title += QStringLiteral(" · %1").arg(employeeName);
+
+    QString rows;
+    for (int i = 0; i < fields.size(); ++i) {
+        const QString field = fields.at(i);
+        if (field.startsWith(QStringLiteral("工号:")) ||
+            field.startsWith(QStringLiteral("姓名:")) ||
+            field.startsWith(QStringLiteral("本月工资额"))) {
+            continue;
+        }
+        rows += fieldRowHtml(field);
+    }
+    if (rows.isEmpty()) rows = fieldRowHtml(line);
+
+    QString badges;
+    if (!plan.isEmpty()) {
+        badges += QStringLiteral(
+                      "<span style='display:inline-block; margin-left:8px; padding:3px 8px;"
+                      "border-radius:10px; background:#ddf4ff; color:#0969da;"
+                      "font-size:12px; font-weight:600;'>%1</span>")
+                      .arg(escapedHtml(plan));
+    }
+    if (!salary.isEmpty()) {
+        badges += QStringLiteral(
+                      "<span style='display:inline-block; margin-left:8px; padding:3px 8px;"
+                      "border-radius:10px; background:#ecfdf3; color:#1f7a4d;"
+                      "font-size:12px; font-weight:600;'>工资 %1</span>")
+                      .arg(escapedHtml(salary));
+    }
+
+    return QStringLiteral(
+               "<table cellspacing='0' cellpadding='0' style='width:100%; margin:0 0 14px 0;"
+               "border-collapse:collapse; border:2px solid #bfd7ff; background:#ffffff;'>"
+               "<tr><td style='padding:12px 14px; background:#f0f6ff;"
+               "border-bottom:1px solid #bfd7ff; border-left:5px solid #0969da;'>"
+               "<span style='font-size:17px; font-weight:700; color:#111827;'>%1</span>%2"
+               "</td></tr>"
+               "<tr><td style='padding:0;'>"
+               "<table cellspacing='0' cellpadding='0' style='width:100%;"
+               "border-collapse:collapse; background:#ffffff;'>%3</table>"
+               "</td></tr>"
+               "</table>")
+        .arg(escapedHtml(title))
+        .arg(badges)
+        .arg(rows);
+}
+
+QString attendanceStateHtml(const QString& text, FeedbackKind kind) {
+    return QStringLiteral(
+               "<table cellspacing='0' cellpadding='0' style='width:100%;"
+               "border-collapse:collapse; border:2px solid %1; background:%3;'>"
+               "<tr><td style='padding:14px 16px; border-left:5px solid %2;"
+               "color:#374151; line-height:1.5;'>%4</td></tr></table>")
+        .arg(feedbackColor(kind))
+        .arg(feedbackColor(kind))
+        .arg(feedbackBackground(kind))
+        .arg(escapedHtml(text));
+}
+
+QString attendanceRecordsHtml(const QString& text) {
+    QString value = text.trimmed();
+    if (value.isEmpty()) {
+        return attendanceStateHtml(QStringLiteral("当前没有员工考勤记录"), FeedbackInfo);
+    }
+
+    FeedbackKind state = classifyServerMessage(value);
+    if (value.contains(QStringLiteral("当前没有")) ||
+        value.contains(QStringLiteral("失败")) ||
+        value.contains(QStringLiteral("未找到"))) {
+        return attendanceStateHtml(value, state);
+    }
+
+    QString html;
+    QStringList lines = value.split(QChar('\n'), Qt::SkipEmptyParts);
+    for (int i = 0; i < lines.size(); ++i) {
+        html += attendanceCardHtml(lines.at(i).trimmed(), i);
+    }
+    return html;
+}
+
 class ServerWindow : public QWidget {
 public:
-    explicit ServerWindow(QWidget* parent = NULL) : QWidget(parent) {
+    explicit ServerWindow(QWidget* parent = NULL)
+        : QWidget(parent), showingQueryResult_(false) {
         setWindowTitle(QStringLiteral("人脸考勤服务端"));
         resize(1600, 1000);
 
@@ -153,7 +322,7 @@ public:
         refreshTimer_ = new QTimer(this);
         refreshTimer_->setInterval(3000);
         connect(refreshTimer_, &QTimer::timeout, this, [this]() {
-            if (server_.isRunning()) refreshRecords();
+            if (server_.isRunning() && !showingQueryResult_) refreshRecords();
         });
         refreshTimer_->start();
 
@@ -304,10 +473,16 @@ private:
         queryRow->addWidget(queryIdEdit_, 1);
         queryRow->addWidget(queryButton);
 
+        recordModeLabel_ = new QLabel(QStringLiteral("当前显示：全部员工考勤记录"), box);
+        recordModeLabel_->setObjectName(QStringLiteral("sectionTitle"));
+
         recordsEdit_ = new QTextEdit(box);
         recordsEdit_->setReadOnly(true);
-        recordsEdit_->setLineWrapMode(QTextEdit::NoWrap);
+        recordsEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
         recordsEdit_->setPlaceholderText(QStringLiteral("暂无考勤记录"));
+        recordsEdit_->setStyleSheet(
+            "QTextEdit { background: #f8fafc; border: 1px solid #bfd7ff;"
+            "border-radius: 8px; padding: 10px; }");
 
         QHBoxLayout* buttons = new QHBoxLayout;
         QPushButton* refreshButton = actionButton(QStringLiteral("刷新记录"),
@@ -318,6 +493,7 @@ private:
         connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshRecords(); });
 
         layout->addLayout(queryRow);
+        layout->addWidget(recordModeLabel_);
         layout->addWidget(recordsEdit_);
         layout->addLayout(buttons);
         return box;
@@ -408,7 +584,9 @@ private:
     }
 
     void refreshRecords() {
-        recordsEdit_->setPlainText(toQString(face::listAttendanceRecords()));
+        showingQueryResult_ = false;
+        recordModeLabel_->setText(QStringLiteral("当前显示：全部员工考勤记录"));
+        recordsEdit_->setHtml(attendanceRecordsHtml(toQString(face::listAttendanceRecords())));
     }
 
     void queryRecord() {
@@ -420,7 +598,9 @@ private:
         }
 
         QString result = toQString(face::queryAttendanceRecord(toStdString(idText)));
-        recordsEdit_->setPlainText(result);
+        showingQueryResult_ = true;
+        recordModeLabel_->setText(QStringLiteral("当前显示：工号 %1 的查询结果").arg(idText));
+        recordsEdit_->setHtml(attendanceRecordsHtml(result));
         appendLog(QStringLiteral("查询工号 %1\n%2").arg(idText).arg(result),
                   classifyServerMessage(result));
     }
@@ -470,6 +650,7 @@ private:
 
     face::AttendanceTcpServer server_;
     QTimer* refreshTimer_;
+    bool showingQueryResult_;
     QSpinBox* portSpin_;
     QLabel* statusLabel_;
     QPushButton* startButton_;
@@ -480,6 +661,7 @@ private:
     QCheckBox* timeCheck_;
     QTimeEdit* timeEdit_;
     QLineEdit* queryIdEdit_;
+    QLabel* recordModeLabel_;
     QTextEdit* recordsEdit_;
     QTextEdit* logEdit_;
 };

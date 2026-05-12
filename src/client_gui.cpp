@@ -25,6 +25,7 @@
 #include <QTextCursor>
 #include <QTime>
 #include <QTimeEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -375,7 +376,8 @@ private:
 
 class ClientWindow : public QWidget {
 public:
-    explicit ClientWindow(QWidget* parent = NULL) : QWidget(parent), busy_(false) {
+    explicit ClientWindow(QWidget* parent = NULL)
+        : QWidget(parent), busy_(false), syncBusy_(false) {
         setWindowTitle(QStringLiteral("人脸考勤客户端"));
         resize(1600, 1000);
 
@@ -392,6 +394,7 @@ public:
         root->addWidget(subtitle);
 
         root->addWidget(createConnectionBox());
+        root->addWidget(createServerTimeBox());
 
         QTabWidget* tabs = new QTabWidget(this);
         tabs->setObjectName(QStringLiteral("mainTabs"));
@@ -405,6 +408,8 @@ public:
             "QWidget { background: #f6f8fb; color: #1f2937; font-size: 14px; }"
             "QLabel#pageTitle { font-size: 24px; font-weight: 700; color: #111827; }"
             "QLabel#pageSubtitle { color: #6b7280; padding-bottom: 2px; }"
+            "QLabel#sectionTitle { color: #374151; font-weight: 700; padding-top: 4px; }"
+            "QLabel#syncValue { color: #1f2937; font-weight: 600; }"
             "QGroupBox { background: #ffffff; font-weight: 600; border: 1px solid #d0d7de;"
             " border-radius: 8px; margin-top: 12px; padding: 14px; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px;"
@@ -449,6 +454,13 @@ public:
             " border-color: #ffaba8; }"
             "QTextEdit { background: #ffffff; border: 1px solid #d0d7de;"
             " border-radius: 8px; padding: 8px; }");
+
+        syncTimer_ = new QTimer(this);
+        syncTimer_->setInterval(10000);
+        connect(syncTimer_, &QTimer::timeout, this, [this]() {
+            syncServerDateTime(false);
+        });
+        syncTimer_->start();
     }
 
 private:
@@ -485,8 +497,40 @@ private:
                     face::sendClientRequest(host, port, "CLIENT_PING|||");
                 return response;
             });
+            syncServerDateTime(false);
         });
 
+        return box;
+    }
+
+    QWidget* createServerTimeBox() {
+        QGroupBox* box = new QGroupBox(QStringLiteral("服务端日期与时间"), this);
+        QVBoxLayout* layout = new QVBoxLayout(box);
+
+        QHBoxLayout* top = new QHBoxLayout;
+        QLabel* title = new QLabel(QStringLiteral("同步状态"), box);
+        title->setObjectName(QStringLiteral("sectionTitle"));
+        QPushButton* refreshButton = actionButton(QStringLiteral("刷新同步"),
+                                                  QStyle::SP_BrowserReload,
+                                                  box, "accent");
+        top->addWidget(title);
+        top->addStretch(1);
+        top->addWidget(refreshButton);
+
+        serverTimeLabel_ = new QLabel(QStringLiteral("尚未同步服务端设置"), box);
+        serverTimeLabel_->setObjectName(QStringLiteral("syncValue"));
+        serverTimeLabel_->setWordWrap(true);
+        serverTimeHintLabel_ = new QLabel(QStringLiteral("服务端修改日期或时间后，客户端会定时刷新；也可以手动刷新。"), box);
+        serverTimeHintLabel_->setWordWrap(true);
+        serverTimeHintLabel_->setStyleSheet("color: #6b7280;");
+
+        connect(refreshButton, &QPushButton::clicked, this, [this]() {
+            syncServerDateTime(true);
+        });
+
+        layout->addLayout(top);
+        layout->addWidget(serverTimeLabel_);
+        layout->addWidget(serverTimeHintLabel_);
         return box;
     }
 
@@ -635,7 +679,7 @@ private:
         faceLayout->addWidget(salaryButton);
         faceLayout->addStretch(1);
 
-        QGroupBox* planBox = new QGroupBox(QStringLiteral("激励计划与删除"), page);
+        QGroupBox* planBox = new QGroupBox(QStringLiteral("激励计划"), page);
         QFormLayout* planForm = new QFormLayout(planBox);
         planIdEdit_ = new QLineEdit(planBox);
         planIdEdit_->setPlaceholderText(QStringLiteral("输入需要确认的员工工号"));
@@ -648,14 +692,24 @@ private:
         QPushButton* normalButton =
             actionButton(QStringLiteral("退出激励计划"), QStyle::SP_ArrowDown,
                          planBox);
-        QPushButton* deleteButton =
-            actionButton(QStringLiteral("删除员工"), QStyle::SP_TrashIcon,
-                         planBox, "danger");
         planButtons->addWidget(hardworkButton);
         planButtons->addWidget(normalButton);
-        planButtons->addWidget(deleteButton);
         planButtons->addStretch(1);
         planForm->addRow(planButtons);
+
+        QGroupBox* deleteBox = new QGroupBox(QStringLiteral("删除员工"), page);
+        QFormLayout* deleteForm = new QFormLayout(deleteBox);
+        deleteIdEdit_ = new QLineEdit(deleteBox);
+        deleteIdEdit_->setPlaceholderText(QStringLiteral("输入需要删除的员工工号"));
+        deleteForm->addRow(QStringLiteral("目标工号"), deleteIdEdit_);
+
+        QHBoxLayout* deleteButtons = new QHBoxLayout;
+        QPushButton* deleteButton =
+            actionButton(QStringLiteral("删除员工"), QStyle::SP_TrashIcon,
+                         deleteBox, "danger");
+        deleteButtons->addWidget(deleteButton);
+        deleteButtons->addStretch(1);
+        deleteForm->addRow(deleteButtons);
 
         connect(identifyButton, &QPushButton::clicked, this, [this]() {
             runCameraTask(QStringLiteral("识别人脸"), [this]() {
@@ -693,7 +747,7 @@ private:
         });
         connect(deleteButton, &QPushButton::clicked, this, [this]() {
             std::string id;
-            if (!requireValue(planIdEdit_, QStringLiteral("目标工号"), id)) return;
+            if (!requireValue(deleteIdEdit_, QStringLiteral("目标工号"), id)) return;
             if (QMessageBox::question(this, QStringLiteral("确认删除"),
                                       QStringLiteral("确认删除该员工全部信息？")) !=
                 QMessageBox::Yes) {
@@ -704,6 +758,7 @@ private:
 
         layout->addWidget(faceBox);
         layout->addWidget(planBox);
+        layout->addWidget(deleteBox);
         layout->addStretch(1);
         return page;
     }
@@ -824,6 +879,44 @@ private:
                 face::sendClientRequest(host, port, requestType + "|" + confirmedId + "||");
             return faceMessage + "\n" + response;
         });
+    }
+
+    void syncServerDateTime(bool manual) {
+        if (syncBusy_) return;
+        syncBusy_ = true;
+        if (manual) {
+            serverTimeLabel_->setText(QStringLiteral("正在同步服务端日期与时间..."));
+        }
+
+        const std::string host = currentHost();
+        const int port = currentPort();
+        QPointer<ClientWindow> self(this);
+        QCoreApplication* app = QCoreApplication::instance();
+        std::thread([self, app, host, port, manual]() {
+            bool ok = true;
+            std::string result;
+            try {
+                result = face::sendClientRequest(host, port, "CLIENT_TIME_STATUS|||");
+            } catch (const std::exception& error) {
+                ok = false;
+                result = error.what();
+            } catch (...) {
+                ok = false;
+                result = "同步失败：未知错误";
+            }
+
+            if (!app) return;
+            QMetaObject::invokeMethod(app, [self, ok, result, manual]() {
+                if (!self) return;
+                self->syncBusy_ = false;
+                QString text = toQString(result);
+                self->serverTimeLabel_->setText(ok ? text : QStringLiteral("同步失败：") + text);
+                if (manual || !ok) {
+                    FeedbackKind kind = ok ? FeedbackSuccess : FeedbackError;
+                    self->appendFeedback(QStringLiteral("同步服务端日期与时间"), text, kind);
+                }
+            }, Qt::QueuedConnection);
+        }).detach();
     }
 
     void runTask(const QString& title, std::function<std::string()> task) {
@@ -964,9 +1057,13 @@ private:
     }
 
     bool busy_;
+    bool syncBusy_;
+    QTimer* syncTimer_;
     QLineEdit* hostEdit_;
     QSpinBox* portSpin_;
     QLabel* statusLabel_;
+    QLabel* serverTimeLabel_;
+    QLabel* serverTimeHintLabel_;
     QTextEdit* logEdit_;
     QLineEdit* employeeIdEdit_;
     QLineEdit* employeeNameEdit_;
@@ -975,6 +1072,7 @@ private:
     QCheckBox* markTimeCheck_;
     QTimeEdit* markTimeEdit_;
     QLineEdit* planIdEdit_;
+    QLineEdit* deleteIdEdit_;
     std::vector<QPushButton*> actionButtons_;
 };
 

@@ -558,6 +558,22 @@ bool setAttendanceDateTimeOverride(const std::string& dateText,
     return true;
 }
 
+std::string attendanceDateTimeStatus() {
+    std::lock_guard<std::mutex> lock(g_dataMutex);
+    std::string dateText = g_dateOverride.empty() ? currentDate() : g_dateOverride;
+    std::string timeText = g_timeOverride.empty() ? currentTimeText() : g_timeOverride;
+
+    std::ostringstream output;
+    output << "服务端日期：" << dateText
+           << "（" << (g_dateOverride.empty() ? "系统日期" : "已指定") << "）"
+           << "；打卡时间：" << timeText
+           << "（" << (g_timeOverride.empty()
+                         ? "未指定，客户端可提交；为空时使用服务器当前时间"
+                         : "已指定，覆盖客户端提交时间")
+           << "）";
+    return output.str();
+}
+
 std::string listAttendanceRecords() {
     std::lock_guard<std::mutex> lock(g_dataMutex);
     return handleList(loadEmployees());
@@ -574,6 +590,9 @@ std::string processRequest(const std::string& line) {
     Request request = parseRequest(line);
     if (request.type == "CLIENT_PING") {
         return "服务器连接正常";
+    }
+    if (request.type == "CLIENT_TIME_STATUS") {
+        return attendanceDateTimeStatus();
     }
 
     // 服务端可能同时处理多个客户端连接，文件读写用互斥锁保护。
