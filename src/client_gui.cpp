@@ -142,6 +142,7 @@ public:
           cancelled_(false),
           finished_(false),
           ok_(false) {
+        setObjectName(QStringLiteral("captureShell"));
         setWindowTitle(title);
         resize(760, 620);
         setModal(true);
@@ -153,9 +154,7 @@ public:
         previewLabel_ = new QLabel(QStringLiteral("正在打开摄像头..."), this);
         previewLabel_->setAlignment(Qt::AlignCenter);
         previewLabel_->setMinimumSize(640, 480);
-        previewLabel_->setStyleSheet(
-            "background: #111827; color: white; border-radius: 8px;"
-            "font-size: 16px; font-weight: 600;");
+        previewLabel_->setObjectName(QStringLiteral("capturePreview"));
 
         statusLabel_ = new QLabel(QStringLiteral("请正对摄像头"), this);
         statusLabel_->setObjectName(QStringLiteral("captureStatus"));
@@ -172,13 +171,18 @@ public:
         layout->addLayout(bottom);
 
         setStyleSheet(
-            "QDialog { background: #f6f8fb; color: #1f2937; }"
-            "QLabel#captureStatus { background: #ffffff; border: 1px solid #d0d7de;"
-            " border-radius: 6px; padding: 8px 10px; color: #374151; }"
-            "QPushButton { min-height: 34px; padding: 5px 14px; border-radius: 5px;"
-            " border: 1px solid #c9d1d9; background: #ffffff; color: #24292f; }"
-            "QPushButton:hover { background: #f3f4f6; }"
-            "QPushButton:disabled { color: #8c959f; background: #f6f8fa; }");
+            "QDialog#captureShell { color: #1f2937; "
+            "font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', sans-serif;"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            "stop:0 #f5fbff, stop:1 #fff6ea); }"
+            "QLabel#capturePreview { background: #0f172a; color: #f8fafc; border-radius: 12px;"
+            "border: 1px solid #243040; font-size: 16px; font-weight: 700; }"
+            "QLabel#captureStatus { background: rgba(255, 255, 255, 0.92); border: 1px solid #c6d3dd;"
+            "border-radius: 9px; padding: 9px 11px; color: #334155; font-weight: 600; }"
+            "QPushButton { min-height: 36px; padding: 6px 15px; border-radius: 9px;"
+            "border: 1px solid #b7c7d3; background: #ffffff; color: #1e293b; font-weight: 700; }"
+            "QPushButton:hover { background: #f4f9fc; border-color: #8fb1c4; }"
+            "QPushButton:disabled { color: #8c959f; background: #f6f8fa; border-color: #d6dee4; }");
 
         connect(cancelButton_, &QPushButton::clicked, this, [this]() { reject(); });
     }
@@ -378,6 +382,7 @@ class ClientWindow : public QWidget {
 public:
     explicit ClientWindow(QWidget* parent = NULL)
         : QWidget(parent), busy_(false), syncBusy_(false) {
+        setObjectName(QStringLiteral("rootShell"));
         setWindowTitle(QStringLiteral("人脸考勤客户端"));
         resize(1600, 1000);
 
@@ -393,67 +398,79 @@ public:
         root->addWidget(title);
         root->addWidget(subtitle);
 
-        root->addWidget(createConnectionBox());
-        root->addWidget(createServerTimeBox());
-
         QTabWidget* tabs = new QTabWidget(this);
         tabs->setObjectName(QStringLiteral("mainTabs"));
+        tabs->addTab(createConnectionPage(), QStringLiteral("连接与同步"));
         tabs->addTab(createEmployeeTab(), QStringLiteral("员工"));
         tabs->addTab(createAttendanceTab(), QStringLiteral("打卡"));
-        tabs->addTab(createFaceAndPlanTab(), QStringLiteral("刷脸与计划"));
+        tabs->addTab(createFaceQueryTab(), QStringLiteral("刷脸查询"));
+        tabs->addTab(createPlanTab(), QStringLiteral("计划与删除"));
+        tabs->addTab(createLogBox(), QStringLiteral("操作日志"));
         root->addWidget(tabs, 1);
-        root->addWidget(createLogBox(), 1);
 
         setStyleSheet(
-            "QWidget { background: #f6f8fb; color: #1f2937; font-size: 14px; }"
-            "QLabel#pageTitle { font-size: 24px; font-weight: 700; color: #111827; }"
-            "QLabel#pageSubtitle { color: #6b7280; padding-bottom: 2px; }"
-            "QLabel#sectionTitle { color: #374151; font-weight: 700; padding-top: 4px; }"
-            "QLabel#syncValue { color: #1f2937; font-weight: 600; }"
-            "QGroupBox { background: #ffffff; font-weight: 600; border: 1px solid #d0d7de;"
-            " border-radius: 8px; margin-top: 12px; padding: 14px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px;"
-            " color: #374151; background: #f6f8fb; }"
-            "QTabWidget::pane { border: 1px solid #d0d7de; border-radius: 8px;"
-            " background: #ffffff; top: -1px; }"
-            "QTabBar::tab { background: #eef2f7; color: #4b5563; min-width: 108px;"
-            " padding: 9px 16px; border: 1px solid #d0d7de;"
-            " border-top-left-radius: 6px; border-top-right-radius: 6px; }"
-            "QTabBar::tab:selected { background: #ffffff; color: #0969da;"
-            " border-bottom-color: #ffffff; font-weight: 600; }"
-            "QLineEdit, QSpinBox, QTimeEdit { background: #ffffff; min-height: 32px;"
-            " padding: 3px 8px; border: 1px solid #c9d1d9; border-radius: 5px; }"
-            "QLineEdit:focus, QSpinBox:focus, QTimeEdit:focus { border: 1px solid #0969da; }"
-            "QCheckBox { spacing: 8px; }"
-            "QPushButton { min-height: 34px; padding: 5px 14px; border-radius: 5px;"
-            " border: 1px solid #c9d1d9; background: #ffffff; color: #24292f;"
-            " font-weight: 600; }"
-            "QPushButton:hover { background: #f3f4f6; }"
-            "QPushButton:pressed { background: #eaeef2; }"
-            "QPushButton:disabled { color: #8c959f; background: #f6f8fa; }"
-            "QPushButton[role=\"primary\"] { background: #1f7a4d; border-color: #1f7a4d;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"primary\"]:hover { background: #17623d; }"
-            "QPushButton[role=\"accent\"] { background: #0969da; border-color: #0969da;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"accent\"]:hover { background: #0757b8; }"
-            "QPushButton[role=\"danger\"] { background: #b42318; border-color: #b42318;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"danger\"]:hover { background: #912018; }"
-            "QLabel#statusBadge { border-radius: 12px; padding: 5px 12px;"
-            " font-weight: 600; border: 1px solid transparent; }"
-            "QLabel#statusBadge[state=\"idle\"] { color: #57606a; background: #f6f8fa;"
-            " border-color: #d0d7de; }"
-            "QLabel#statusBadge[state=\"busy\"] { color: #0969da; background: #ddf4ff;"
-            " border-color: #54aeff; }"
-            "QLabel#statusBadge[state=\"ok\"] { color: #1f7a4d; background: #ecfdf3;"
-            " border-color: #8ee0ad; }"
-            "QLabel#statusBadge[state=\"warning\"] { color: #9a6700; background: #fff8c5;"
-            " border-color: #eac54f; }"
-            "QLabel#statusBadge[state=\"error\"] { color: #b42318; background: #ffebe9;"
-            " border-color: #ffaba8; }"
-            "QTextEdit { background: #ffffff; border: 1px solid #d0d7de;"
-            " border-radius: 8px; padding: 8px; }");
+            "QWidget { color: #1f2937; font-size: 14px;"
+            "font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', sans-serif; }"
+            "QWidget#rootShell {"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            "stop:0 #f4fbff, stop:0.55 #fffaf2, stop:1 #f6f8ff); }"
+            "QLabel#pageTitle { font-size: 30px; font-weight: 800; color: #0f172a;"
+            "letter-spacing: 1px; }"
+            "QLabel#pageSubtitle { color: #4b5563; padding-bottom: 6px;"
+            "font-size: 14px; font-weight: 500; }"
+            "QLabel#sectionTitle { color: #0f4c5c; font-size: 15px; font-weight: 700;"
+            "padding-top: 4px; }"
+            "QLabel#syncValue { color: #0f172a; font-weight: 700; line-height: 1.35; }"
+            "QLabel#syncHint { color: #64748b; font-weight: 500; }"
+            "QGroupBox { background: rgba(255, 255, 255, 0.9); font-weight: 700;"
+            "border: 1px solid #c5d4df; border-radius: 14px; margin-top: 14px; padding: 16px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 8px;"
+            "color: #0f4c5c; background: #eef7fb; border-radius: 8px; }"
+            "QTabWidget::pane { border: 1px solid #c8d5df; border-radius: 12px;"
+            "background: rgba(255, 255, 255, 0.88); top: -1px; }"
+            "QTabBar::tab { background: #e7f0f6; color: #475569; min-width: 114px;"
+            "padding: 10px 18px; border: 1px solid #c8d5df;"
+            "border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 2px; }"
+            "QTabBar::tab:hover { background: #f2f7fb; color: #0f4c5c; }"
+            "QTabBar::tab:selected { background: #ffffff; color: #ea580c;"
+            "border-bottom-color: #ffffff; font-weight: 700; }"
+            "QLineEdit, QSpinBox, QTimeEdit { background: #ffffff; min-height: 34px;"
+            "padding: 4px 10px; border: 1px solid #b8c8d3; border-radius: 8px;"
+            "selection-background-color: #0e7490; }"
+            "QLineEdit:focus, QSpinBox:focus, QTimeEdit:focus { border: 1px solid #0e7490;"
+            "background: #f5fcff; }"
+            "QCheckBox { spacing: 9px; color: #334155; }"
+            "QPushButton { min-height: 36px; padding: 6px 15px; border-radius: 9px;"
+            "border: 1px solid #b7c7d3; background: #ffffff; color: #1e293b; font-weight: 700; }"
+            "QPushButton:hover { background: #f4f9fc; border-color: #8fb1c4; }"
+            "QPushButton:pressed { background: #e8f1f7; }"
+            "QPushButton:disabled { color: #8c959f; background: #f7f9fb; border-color: #d6dee4; }"
+            "QPushButton[role=\"primary\"] { background: #0f766e; border-color: #0f766e;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"primary\"]:hover { background: #0c625c; }"
+            "QPushButton[role=\"accent\"] { background: #ea580c; border-color: #ea580c;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"accent\"]:hover { background: #c94807; }"
+            "QPushButton[role=\"danger\"] { background: #be123c; border-color: #be123c;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"danger\"]:hover { background: #9f1239; }"
+            "QLabel#statusBadge { border-radius: 14px; padding: 6px 14px;"
+            "font-weight: 700; border: 1px solid transparent; }"
+            "QLabel#statusBadge[state=\"idle\"] { color: #475569; background: #eef2f6;"
+            "border-color: #d2dbe3; }"
+            "QLabel#statusBadge[state=\"busy\"] { color: #0f4c5c; background: #ddf6ff;"
+            "border-color: #8fd9ee; }"
+            "QLabel#statusBadge[state=\"ok\"] { color: #065f46; background: #dff8ec;"
+            "border-color: #9fdfc2; }"
+            "QLabel#statusBadge[state=\"warning\"] { color: #9a3412; background: #fff2d8;"
+            "border-color: #f8c58a; }"
+            "QLabel#statusBadge[state=\"error\"] { color: #9f1239; background: #ffe3ec;"
+            "border-color: #ffb4cb; }"
+            "QTextEdit { background: #fffefb; border: 1px solid #cad5df;"
+            "border-radius: 12px; padding: 10px; }"
+            "QScrollBar:vertical { width: 10px; margin: 2px 2px 2px 0; }"
+            "QScrollBar::handle:vertical { background: #c7d4de; border-radius: 5px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }");
 
         syncTimer_ = new QTimer(this);
         syncTimer_->setInterval(10000);
@@ -464,6 +481,15 @@ public:
     }
 
 private:
+    QWidget* createConnectionPage() {
+        QWidget* page = new QWidget(this);
+        QVBoxLayout* layout = new QVBoxLayout(page);
+        layout->addWidget(createConnectionBox());
+        layout->addWidget(createServerTimeBox());
+        layout->addStretch(1);
+        return page;
+    }
+
     QWidget* createConnectionBox() {
         QGroupBox* box = new QGroupBox(QStringLiteral("服务器连接"), this);
         QHBoxLayout* layout = new QHBoxLayout(box);
@@ -522,7 +548,7 @@ private:
         serverTimeLabel_->setWordWrap(true);
         serverTimeHintLabel_ = new QLabel(QStringLiteral("服务端修改日期或时间后，客户端会定时刷新；也可以手动刷新。"), box);
         serverTimeHintLabel_->setWordWrap(true);
-        serverTimeHintLabel_->setStyleSheet("color: #6b7280;");
+        serverTimeHintLabel_->setObjectName(QStringLiteral("syncHint"));
 
         connect(refreshButton, &QPushButton::clicked, this, [this]() {
             syncServerDateTime(true);
@@ -663,7 +689,7 @@ private:
         return page;
     }
 
-    QWidget* createFaceAndPlanTab() {
+    QWidget* createFaceQueryTab() {
         QWidget* page = new QWidget(this);
         QVBoxLayout* layout = new QVBoxLayout(page);
 
@@ -739,6 +765,47 @@ private:
             });
         });
 
+        layout->addWidget(faceBox);
+        layout->addStretch(1);
+        return page;
+    }
+
+    QWidget* createPlanTab() {
+        QWidget* page = new QWidget(this);
+        QVBoxLayout* layout = new QVBoxLayout(page);
+
+        QGroupBox* planBox = new QGroupBox(QStringLiteral("激励计划"), page);
+        QFormLayout* planForm = new QFormLayout(planBox);
+        planIdEdit_ = new QLineEdit(planBox);
+        planIdEdit_->setPlaceholderText(QStringLiteral("输入需要确认的员工工号"));
+        planForm->addRow(QStringLiteral("目标工号"), planIdEdit_);
+
+        QHBoxLayout* planButtons = new QHBoxLayout;
+        QPushButton* hardworkButton =
+            actionButton(QStringLiteral("加入激励计划"), QStyle::SP_ArrowUp,
+                         planBox, "primary");
+        QPushButton* normalButton =
+            actionButton(QStringLiteral("退出激励计划"), QStyle::SP_ArrowDown,
+                         planBox);
+        planButtons->addWidget(hardworkButton);
+        planButtons->addWidget(normalButton);
+        planButtons->addStretch(1);
+        planForm->addRow(planButtons);
+
+        QGroupBox* deleteBox = new QGroupBox(QStringLiteral("删除员工"), page);
+        QFormLayout* deleteForm = new QFormLayout(deleteBox);
+        deleteIdEdit_ = new QLineEdit(deleteBox);
+        deleteIdEdit_->setPlaceholderText(QStringLiteral("输入需要删除的员工工号"));
+        deleteForm->addRow(QStringLiteral("目标工号"), deleteIdEdit_);
+
+        QHBoxLayout* deleteButtons = new QHBoxLayout;
+        QPushButton* deleteButton =
+            actionButton(QStringLiteral("删除员工"), QStyle::SP_TrashIcon,
+                         deleteBox, "danger");
+        deleteButtons->addWidget(deleteButton);
+        deleteButtons->addStretch(1);
+        deleteForm->addRow(deleteButtons);
+
         connect(hardworkButton, &QPushButton::clicked, this, [this]() {
             startProtectedPlanTask(QStringLiteral("加入激励计划"), "CLIENT_HARDWORK");
         });
@@ -756,7 +823,6 @@ private:
             startProtectedPlanTask(QStringLiteral("删除员工"), "CLIENT_DELETE", id);
         });
 
-        layout->addWidget(faceBox);
         layout->addWidget(planBox);
         layout->addWidget(deleteBox);
         layout->addStretch(1);
@@ -914,6 +980,10 @@ private:
                 if (manual || !ok) {
                     FeedbackKind kind = ok ? FeedbackSuccess : FeedbackError;
                     self->appendFeedback(QStringLiteral("同步服务端日期与时间"), text, kind);
+                    if (manual) {
+                        self->showResultDialog(QStringLiteral("同步服务端日期与时间"),
+                                               text, kind);
+                    }
                 }
             }, Qt::QueuedConnection);
         }).detach();
@@ -952,6 +1022,7 @@ private:
                 self->appendFeedback(title, toQString(result), kind);
                 self->setStatus(feedbackText(kind) + QStringLiteral("：") + title,
                                 feedbackState(kind));
+                self->showResultDialog(title, toQString(result), kind);
                 self->setBusy(false);
             }, Qt::QueuedConnection);
         }).detach();
@@ -984,6 +1055,7 @@ private:
         appendFeedback(title, toQString(result), kind);
         setStatus(feedbackText(kind) + QStringLiteral("：") + title,
                   feedbackState(kind));
+        showResultDialog(title, toQString(result), kind);
         setBusy(false);
     }
 
@@ -1005,6 +1077,18 @@ private:
             return FeedbackWarning;
         }
         return FeedbackSuccess;
+    }
+
+    void showResultDialog(const QString& title, const QString& body, FeedbackKind kind) {
+        if (kind == FeedbackError) {
+            QMessageBox::critical(this, title, body);
+            return;
+        }
+        if (kind == FeedbackWarning) {
+            QMessageBox::warning(this, title, body);
+            return;
+        }
+        QMessageBox::information(this, title, body);
     }
 
     void appendFeedback(const QString& title, const QString& body, FeedbackKind kind) {

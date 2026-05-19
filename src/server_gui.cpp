@@ -20,6 +20,7 @@
 #include <QSpinBox>
 #include <QStringList>
 #include <QStyle>
+#include <QTabWidget>
 #include <QTextCursor>
 #include <QTextEdit>
 #include <QTime>
@@ -297,6 +298,7 @@ class ServerWindow : public QWidget {
 public:
     explicit ServerWindow(QWidget* parent = NULL)
         : QWidget(parent), showingQueryResult_(false) {
+        setObjectName(QStringLiteral("rootShell"));
         setWindowTitle(QStringLiteral("人脸考勤服务端"));
         resize(1600, 1000);
 
@@ -312,12 +314,12 @@ public:
         root->addWidget(title);
         root->addWidget(subtitle);
 
-        root->addWidget(createServerBox());
-
-        QHBoxLayout* content = new QHBoxLayout;
-        content->addWidget(createRecordsBox(), 1);
-        content->addWidget(createLogBox(), 1);
-        root->addLayout(content, 1);
+        QTabWidget* tabs = new QTabWidget(this);
+        tabs->setObjectName(QStringLiteral("mainTabs"));
+        tabs->addTab(createServerBox(), QStringLiteral("服务控制"));
+        tabs->addTab(createRecordsBox(), QStringLiteral("考勤记录"));
+        tabs->addTab(createLogBox(), QStringLiteral("服务日志"));
+        root->addWidget(tabs, 1);
 
         refreshTimer_ = new QTimer(this);
         refreshTimer_->setInterval(3000);
@@ -330,45 +332,64 @@ public:
         refreshRecords();
 
         setStyleSheet(
-            "QWidget { background: #f6f8fb; color: #1f2937; font-size: 14px; }"
-            "QLabel#pageTitle { font-size: 24px; font-weight: 700; color: #111827; }"
-            "QLabel#pageSubtitle { color: #6b7280; padding-bottom: 2px; }"
-            "QLabel#sectionTitle { color: #374151; font-weight: 700; padding-top: 4px; }"
-            "QGroupBox { background: #ffffff; font-weight: 600; border: 1px solid #d0d7de;"
-            " border-radius: 8px; margin-top: 12px; padding: 14px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px;"
-            " color: #374151; background: #f6f8fb; }"
-            "QLineEdit, QSpinBox, QDateEdit, QTimeEdit { background: #ffffff; min-height: 32px;"
-            " padding: 3px 8px; border: 1px solid #c9d1d9; border-radius: 5px; }"
-            "QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus { border: 1px solid #0969da; }"
-            "QCheckBox { spacing: 8px; }"
-            "QPushButton { min-height: 34px; padding: 5px 14px; border-radius: 5px;"
-            " border: 1px solid #c9d1d9; background: #ffffff; color: #24292f;"
-            " font-weight: 600; }"
-            "QPushButton:hover { background: #f3f4f6; }"
-            "QPushButton:pressed { background: #eaeef2; }"
-            "QPushButton:disabled { color: #8c959f; background: #f6f8fa; }"
-            "QPushButton[role=\"primary\"] { background: #1f7a4d; border-color: #1f7a4d;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"primary\"]:hover { background: #17623d; }"
-            "QPushButton[role=\"accent\"] { background: #0969da; border-color: #0969da;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"accent\"]:hover { background: #0757b8; }"
-            "QPushButton[role=\"danger\"] { background: #b42318; border-color: #b42318;"
-            " color: #ffffff; }"
-            "QPushButton[role=\"danger\"]:hover { background: #912018; }"
-            "QLabel#statusBadge { border-radius: 12px; padding: 5px 12px;"
-            " font-weight: 600; border: 1px solid transparent; }"
-            "QLabel#statusBadge[state=\"idle\"] { color: #57606a; background: #f6f8fa;"
-            " border-color: #d0d7de; }"
-            "QLabel#statusBadge[state=\"ok\"] { color: #1f7a4d; background: #ecfdf3;"
-            " border-color: #8ee0ad; }"
-            "QLabel#statusBadge[state=\"warning\"] { color: #9a6700; background: #fff8c5;"
-            " border-color: #eac54f; }"
-            "QLabel#statusBadge[state=\"error\"] { color: #b42318; background: #ffebe9;"
-            " border-color: #ffaba8; }"
-            "QTextEdit { background: #ffffff; border: 1px solid #d0d7de;"
-            " border-radius: 8px; padding: 8px; }");
+            "QWidget { color: #1f2937; font-size: 14px;"
+            "font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', sans-serif; }"
+            "QWidget#rootShell {"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            "stop:0 #f4fbff, stop:0.55 #fffaf2, stop:1 #f6f8ff); }"
+            "QLabel#pageTitle { font-size: 30px; font-weight: 800; color: #0f172a;"
+            "letter-spacing: 1px; }"
+            "QLabel#pageSubtitle { color: #4b5563; padding-bottom: 6px;"
+            "font-size: 14px; font-weight: 500; }"
+            "QLabel#sectionTitle { color: #0f4c5c; font-size: 15px; font-weight: 700;"
+            "padding-top: 4px; }"
+            "QGroupBox { background: rgba(255, 255, 255, 0.9); font-weight: 700;"
+            "border: 1px solid #c5d4df; border-radius: 14px; margin-top: 14px; padding: 16px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 8px;"
+            "color: #0f4c5c; background: #eef7fb; border-radius: 8px; }"
+            "QTabWidget::pane { border: 1px solid #c8d5df; border-radius: 12px;"
+            "background: rgba(255, 255, 255, 0.88); top: -1px; }"
+            "QTabBar::tab { background: #e7f0f6; color: #475569; min-width: 118px;"
+            "padding: 10px 18px; border: 1px solid #c8d5df;"
+            "border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 2px; }"
+            "QTabBar::tab:hover { background: #f2f7fb; color: #0f4c5c; }"
+            "QTabBar::tab:selected { background: #ffffff; color: #ea580c;"
+            "border-bottom-color: #ffffff; font-weight: 700; }"
+            "QLineEdit, QSpinBox, QDateEdit, QTimeEdit { background: #ffffff; min-height: 34px;"
+            "padding: 4px 10px; border: 1px solid #b8c8d3; border-radius: 8px;"
+            "selection-background-color: #0e7490; }"
+            "QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {"
+            "border: 1px solid #0e7490; background: #f5fcff; }"
+            "QCheckBox { spacing: 9px; color: #334155; }"
+            "QPushButton { min-height: 36px; padding: 6px 15px; border-radius: 9px;"
+            "border: 1px solid #b7c7d3; background: #ffffff; color: #1e293b; font-weight: 700; }"
+            "QPushButton:hover { background: #f4f9fc; border-color: #8fb1c4; }"
+            "QPushButton:pressed { background: #e8f1f7; }"
+            "QPushButton:disabled { color: #8c959f; background: #f7f9fb; border-color: #d6dee4; }"
+            "QPushButton[role=\"primary\"] { background: #0f766e; border-color: #0f766e;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"primary\"]:hover { background: #0c625c; }"
+            "QPushButton[role=\"accent\"] { background: #ea580c; border-color: #ea580c;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"accent\"]:hover { background: #c94807; }"
+            "QPushButton[role=\"danger\"] { background: #be123c; border-color: #be123c;"
+            "color: #ffffff; }"
+            "QPushButton[role=\"danger\"]:hover { background: #9f1239; }"
+            "QLabel#statusBadge { border-radius: 14px; padding: 6px 14px;"
+            "font-weight: 700; border: 1px solid transparent; }"
+            "QLabel#statusBadge[state=\"idle\"] { color: #475569; background: #eef2f6;"
+            "border-color: #d2dbe3; }"
+            "QLabel#statusBadge[state=\"ok\"] { color: #065f46; background: #dff8ec;"
+            "border-color: #9fdfc2; }"
+            "QLabel#statusBadge[state=\"warning\"] { color: #9a3412; background: #fff2d8;"
+            "border-color: #f8c58a; }"
+            "QLabel#statusBadge[state=\"error\"] { color: #9f1239; background: #ffe3ec;"
+            "border-color: #ffb4cb; }"
+            "QTextEdit { background: #fffefb; border: 1px solid #cad5df;"
+            "border-radius: 12px; padding: 10px; }"
+            "QScrollBar:vertical { width: 10px; margin: 2px 2px 2px 0; }"
+            "QScrollBar::handle:vertical { background: #c7d4de; border-radius: 5px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }");
     }
 
 protected:
@@ -480,9 +501,6 @@ private:
         recordsEdit_->setReadOnly(true);
         recordsEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
         recordsEdit_->setPlaceholderText(QStringLiteral("暂无考勤记录"));
-        recordsEdit_->setStyleSheet(
-            "QTextEdit { background: #f8fafc; border: 1px solid #bfd7ff;"
-            "border-radius: 8px; padding: 10px; }");
 
         QHBoxLayout* buttons = new QHBoxLayout;
         QPushButton* refreshButton = actionButton(QStringLiteral("刷新记录"),
