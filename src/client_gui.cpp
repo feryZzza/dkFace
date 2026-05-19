@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QImage>
@@ -163,6 +164,26 @@ QString avatarDataUri(const QString& employeeId) {
 
     return QStringLiteral("data:image/png;base64,%1")
         .arg(QString::fromLatin1(bytes.toBase64()));
+}
+
+QString resolveUiImagePath(const QString& fileName) {
+    QStringList candidates;
+    const QString relativePath = QStringLiteral("img/%1").arg(fileName);
+    candidates << QDir::current().absoluteFilePath(relativePath);
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    candidates << QDir(appDir).absoluteFilePath(relativePath);
+    candidates << QDir(appDir).absoluteFilePath(
+        QStringLiteral("../%1").arg(relativePath));
+    candidates << QDir(appDir).absoluteFilePath(
+        QStringLiteral("../../%1").arg(relativePath));
+    candidates << QDir(appDir).absoluteFilePath(
+        QStringLiteral("../../../%1").arg(relativePath));
+
+    for (int i = 0; i < candidates.size(); ++i) {
+        if (QFileInfo::exists(candidates.at(i))) return candidates.at(i);
+    }
+    return QString();
 }
 
 QString extractProfileText(const QString& mixedResult) {
@@ -688,6 +709,15 @@ public:
             "border-color: #f8c58a; }"
             "QLabel#statusBadge[state=\"error\"] { color: #9f1239; background: #ffe3ec;"
             "border-color: #ffb4cb; }"
+            "QWidget#connectionVisualCard {"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            "stop:0 #f8fcff, stop:1 #fff8ef);"
+            "border: 1px solid #cbd9e3; border-radius: 14px; }"
+            "QLabel#connectionVisualTitle { color: #0f172a; font-size: 17px;"
+            "font-weight: 800; }"
+            "QLabel#connectionVisualHint { color: #64748b; font-weight: 500; }"
+            "QLabel#connectionImage { border: 1px solid #d7e1ea; border-radius: 12px;"
+            "background: rgba(255, 255, 255, 0.85); }"
             "QTextEdit { background: #fffefb; border: 1px solid #cad5df;"
             "border-radius: 12px; padding: 10px; }"
             "QScrollBar:vertical { width: 10px; margin: 2px 2px 2px 0; }"
@@ -860,27 +890,72 @@ private:
     QWidget* createConnectionBox() {
         QGroupBox* box = new QGroupBox(QStringLiteral("服务器连接"), this);
         QHBoxLayout* layout = new QHBoxLayout(box);
+        layout->setSpacing(14);
 
-        hostEdit_ = new QLineEdit(QStringLiteral("127.0.0.1"), box);
+        QWidget* formArea = new QWidget(box);
+        QVBoxLayout* formLayout = new QVBoxLayout(formArea);
+        formLayout->setContentsMargins(0, 0, 0, 0);
+        formLayout->setSpacing(10);
+
+        QGridLayout* inputs = new QGridLayout;
+        inputs->setHorizontalSpacing(10);
+        inputs->setVerticalSpacing(10);
+
+        hostEdit_ = new QLineEdit(QStringLiteral("127.0.0.1"), formArea);
         hostEdit_->setPlaceholderText(QStringLiteral("服务器 IP"));
         hostEdit_->setMinimumWidth(180);
-        portSpin_ = new QSpinBox(box);
+        portSpin_ = new QSpinBox(formArea);
         portSpin_->setRange(1, 65535);
         portSpin_->setValue(face::DEFAULT_PORT);
 
         QPushButton* testButton = actionButton(QStringLiteral("测试连接"),
-                                               QStyle::SP_DialogApplyButton, box, "accent");
-        statusLabel_ = new QLabel(QStringLiteral("未连接"), box);
+                                               QStyle::SP_DialogApplyButton, formArea, "accent");
+        statusLabel_ = new QLabel(QStringLiteral("未连接"), formArea);
         statusLabel_->setObjectName(QStringLiteral("statusBadge"));
-        statusLabel_->setMinimumWidth(260);
-        setStatus(QStringLiteral("未连接"), "idle");
+        statusLabel_->setMinimumWidth(230);
 
-        layout->addWidget(new QLabel(QStringLiteral("地址"), box));
-        layout->addWidget(hostEdit_);
-        layout->addWidget(new QLabel(QStringLiteral("端口"), box));
-        layout->addWidget(portSpin_);
-        layout->addWidget(testButton);
-        layout->addWidget(statusLabel_, 1);
+        inputs->addWidget(new QLabel(QStringLiteral("服务器地址"), formArea), 0, 0);
+        inputs->addWidget(hostEdit_, 0, 1, 1, 3);
+        inputs->addWidget(new QLabel(QStringLiteral("端口"), formArea), 1, 0);
+        inputs->addWidget(portSpin_, 1, 1);
+        inputs->addWidget(testButton, 1, 2);
+        inputs->addWidget(statusLabel_, 1, 3);
+        inputs->setColumnStretch(1, 1);
+        inputs->setColumnStretch(3, 1);
+        formLayout->addLayout(inputs);
+
+        QLabel* tips = new QLabel(
+            QStringLiteral("提示：连接成功后会自动同步服务端日期时间。连接失败时请检查 IP、端口和服务端是否运行。"),
+            formArea);
+        tips->setObjectName(QStringLiteral("connectionVisualHint"));
+        tips->setWordWrap(true);
+        formLayout->addWidget(tips);
+
+        QWidget* visualCard = new QWidget(box);
+        visualCard->setObjectName(QStringLiteral("connectionVisualCard"));
+        QVBoxLayout* cardLayout = new QVBoxLayout(visualCard);
+        cardLayout->setContentsMargins(12, 12, 12, 12);
+        cardLayout->setSpacing(8);
+
+        connectionVisualTitle_ = new QLabel(QStringLiteral("连接状态可视化"), visualCard);
+        connectionVisualTitle_->setObjectName(QStringLiteral("connectionVisualTitle"));
+        connectionVisualHint_ = new QLabel(
+            QStringLiteral("当前状态：未连接。点击“测试连接”查看连接结果。"), visualCard);
+        connectionVisualHint_->setObjectName(QStringLiteral("connectionVisualHint"));
+        connectionVisualHint_->setWordWrap(true);
+
+        connectionVisualImage_ = new QLabel(visualCard);
+        connectionVisualImage_->setObjectName(QStringLiteral("connectionImage"));
+        connectionVisualImage_->setAlignment(Qt::AlignCenter);
+        connectionVisualImage_->setMinimumSize(220, 220);
+
+        cardLayout->addWidget(connectionVisualTitle_);
+        cardLayout->addWidget(connectionVisualHint_);
+        cardLayout->addWidget(connectionVisualImage_, 1);
+
+        layout->addWidget(formArea, 3);
+        layout->addWidget(visualCard, 2);
+        setStatus(QStringLiteral("未连接"), "idle");
 
         connect(testButton, &QPushButton::clicked, this, [this]() {
             const std::string host = currentHost();
@@ -1533,9 +1608,59 @@ private:
     }
 
     void setStatus(const QString& text, const char* state) {
+        if (!statusLabel_) return;
         statusLabel_->setText(text);
         statusLabel_->setProperty("state", state);
         repolish(statusLabel_);
+        refreshConnectionVisual(QString::fromLatin1(state));
+    }
+
+    void refreshConnectionVisual(const QString& state) {
+        if (!connectionVisualImage_ || !connectionVisualTitle_ || !connectionVisualHint_) {
+            return;
+        }
+
+        if (!connectionSuccessImageLoaded_) {
+            connectionSuccessImage_ =
+                QPixmap(resolveUiImagePath(QStringLiteral("服务器连接成功.png")));
+            connectionFailImage_ =
+                QPixmap(resolveUiImagePath(QStringLiteral("服务器连接失败.png")));
+            connectionSuccessImageLoaded_ = true;
+        }
+
+        QPixmap selected;
+        QString title;
+        QString hint;
+
+        if (state == QStringLiteral("ok")) {
+            selected = connectionSuccessImage_;
+            title = QStringLiteral("连接状态：成功");
+            hint = QStringLiteral("客户端和服务端通信正常，可继续执行注册、打卡和查询操作。");
+        } else if (state == QStringLiteral("error") || state == QStringLiteral("warning")) {
+            selected = connectionFailImage_;
+            title = QStringLiteral("连接状态：异常");
+            hint = QStringLiteral("请先检查网络、服务端进程和端口设置，再重新测试连接。");
+        } else if (state == QStringLiteral("busy")) {
+            selected = connectionSuccessImage_;
+            title = QStringLiteral("连接状态：处理中");
+            hint = QStringLiteral("正在等待服务端响应，请稍候。");
+        } else {
+            selected = connectionSuccessImage_;
+            title = QStringLiteral("连接状态：待检测");
+            hint = QStringLiteral("点击“测试连接”后会根据结果自动切换状态图。");
+        }
+
+        connectionVisualTitle_->setText(title);
+        connectionVisualHint_->setText(hint);
+        if (!selected.isNull()) {
+            connectionVisualImage_->setPixmap(
+                selected.scaled(connectionVisualImage_->size(), Qt::KeepAspectRatio,
+                                Qt::SmoothTransformation));
+            connectionVisualImage_->setText(QString());
+        } else {
+            connectionVisualImage_->setPixmap(QPixmap());
+            connectionVisualImage_->setText(QStringLiteral("图片未找到"));
+        }
     }
 
     void setBusy(bool busy) {
@@ -1553,7 +1678,10 @@ private:
     QTimer* syncTimer_;
     QLineEdit* hostEdit_;
     QSpinBox* portSpin_;
-    QLabel* statusLabel_;
+    QLabel* statusLabel_ = NULL;
+    QLabel* connectionVisualTitle_ = NULL;
+    QLabel* connectionVisualHint_ = NULL;
+    QLabel* connectionVisualImage_ = NULL;
     QLabel* serverTimeLabel_;
     QLabel* serverTimeHintLabel_;
     QTextEdit* logEdit_;
@@ -1573,6 +1701,9 @@ private:
     QPushButton* queryDeleteButton_;
     std::string verifiedEmployeeId_;
     std::vector<QPushButton*> actionButtons_;
+    bool connectionSuccessImageLoaded_ = false;
+    QPixmap connectionSuccessImage_;
+    QPixmap connectionFailImage_;
 };
 
 }  // namespace
