@@ -3,10 +3,13 @@
 #include "../include/face_recognition.hpp"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDialog>
+#include <QDir>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -59,6 +62,209 @@ std::string toStdString(const QString& text) {
 
 QString escapedHtml(const QString& text) {
     return text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+}
+
+QStringList splitTopLevel(const QString& text, QChar delimiter) {
+    QStringList parts;
+    QString current;
+    int depth = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar ch = text.at(i);
+        if (ch == QChar('(') || ch == QChar(0xff08)) ++depth;
+        if (ch == QChar(')') || ch == QChar(0xff09)) {
+            if (depth > 0) --depth;
+        }
+
+        if (ch == delimiter && depth == 0) {
+            parts << current.trimmed();
+            current.clear();
+        } else {
+            current.append(ch);
+        }
+    }
+    if (!current.trimmed().isEmpty()) parts << current.trimmed();
+    return parts;
+}
+
+int firstColonPos(const QString& text) {
+    int asciiPos = text.indexOf(QChar(':'));
+    int fullPos = text.indexOf(QChar(0xff1a));
+    if (asciiPos < 0) return fullPos;
+    if (fullPos < 0) return asciiPos;
+    return asciiPos < fullPos ? asciiPos : fullPos;
+}
+
+QString fieldRowHtml(const QString& field) {
+    int pos = firstColonPos(field);
+    if (pos < 0) {
+        return QStringLiteral(
+                   "<tr><td colspan='2' style='padding:8px 10px; border-top:1px solid #e6edf3;"
+                   "color:#334155;'>%1</td></tr>")
+            .arg(escapedHtml(field));
+    }
+
+    QString label = field.left(pos).trimmed();
+    QString value = field.mid(pos + 1).trimmed();
+    return QStringLiteral(
+               "<tr>"
+               "<td style='width:125px; padding:8px 10px; border-top:1px solid #e6edf3;"
+               "background:#f8fbfd; color:#475569; font-weight:700;'>%1</td>"
+               "<td style='padding:8px 10px; border-top:1px solid #e6edf3;"
+               "background:#ffffff; color:#1f2937;'>%2</td>"
+               "</tr>")
+        .arg(escapedHtml(label))
+        .arg(escapedHtml(value));
+}
+
+QString fieldValue(const QStringList& fields, const QString& prefix) {
+    for (int i = 0; i < fields.size(); ++i) {
+        const QString field = fields.at(i);
+        if (!field.startsWith(prefix)) continue;
+        int pos = firstColonPos(field);
+        if (pos < 0) return QString();
+        return field.mid(pos + 1).trimmed();
+    }
+    return QString();
+}
+
+QString avatarDataUri(const QString& employeeId) {
+    if (employeeId.isEmpty()) return QString();
+
+    const QString path = QDir::current().filePath(
+        QStringLiteral("photos/%1.png").arg(employeeId));
+    if (!QFileInfo::exists(path)) return QString();
+
+    QImage image(path);
+    if (image.isNull()) return QString();
+
+    QImage scaled = image.scaled(96, 96, Qt::KeepAspectRatioByExpanding,
+                                 Qt::SmoothTransformation);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    if (!buffer.open(QIODevice::WriteOnly)) return QString();
+    if (!scaled.save(&buffer, "PNG")) return QString();
+
+    return QStringLiteral("data:image/png;base64,%1")
+        .arg(QString::fromLatin1(bytes.toBase64()));
+}
+
+QString extractProfileText(const QString& mixedResult) {
+    QStringList lines = mixedResult.split(QChar('\n'), Qt::SkipEmptyParts);
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        QString line = lines.at(i).trimmed();
+        if (line.startsWith(QStringLiteral("本月工资额 salary")) ||
+            line.startsWith(QStringLiteral("工号:"))) {
+            return line;
+        }
+    }
+    return mixedResult.trimmed();
+}
+
+QString queryProfileHtml(const QString& source) {
+    QString text = source.trimmed();
+    if (text.isEmpty()) return QString();
+
+    if (text.contains(QStringLiteral("失败")) ||
+        text.contains(QStringLiteral("错误")) ||
+        text.contains(QStringLiteral("未找到"))) {
+        return QStringLiteral(
+                   "<div style='padding:10px 12px; border:1px solid #fecaca;"
+                   "border-left:4px solid #dc2626; background:#fef2f2; color:#991b1b;"
+                   "border-radius:8px;'>%1</div>")
+            .arg(escapedHtml(text));
+    }
+
+    QString salary;
+    QStringList rows;
+    QStringList sections = splitTopLevel(text, QChar(0xff1b));
+    for (int i = 0; i < sections.size(); ++i) {
+        QStringList fields = splitTopLevel(sections.at(i), QChar(0xff0c));
+        for (int j = 0; j < fields.size(); ++j) {
+            QString field = fields.at(j).trimmed();
+            if (field.isEmpty()) continue;
+
+            if (field.startsWith(QStringLiteral("本月工资额 salary"))) {
+                int pos = field.indexOf(QChar('='));
+                salary = pos >= 0 ? field.mid(pos + 1).trimmed() : field;
+                continue;
+            }
+            rows << field;
+        }
+    }
+    if (rows.isEmpty()) rows << text;
+
+    const QString employeeId = fieldValue(rows, QStringLiteral("工号"));
+    const QString employeeName = fieldValue(rows, QStringLiteral("姓名"));
+    const QString plan = fieldValue(rows, QStringLiteral("计划"));
+    const QString avatarUri = avatarDataUri(employeeId);
+
+    QString salaryBadge;
+    if (!salary.isEmpty()) {
+        salaryBadge = QStringLiteral(
+                          "<div style='padding:10px 12px;"
+                          "border:1px solid #bbf7d0; border-left:5px solid #16a34a;"
+                          "background:#f0fdf4; border-radius:8px;'>"
+                          "<div style='color:#166534; font-size:12px; font-weight:700;'>本月工资</div>"
+                          "<div style='color:#14532d; font-size:22px; font-weight:800;'>%1</div>"
+                          "</div>")
+                          .arg(escapedHtml(salary));
+    }
+
+    QString avatarHtml;
+    if (!avatarUri.isEmpty()) {
+        avatarHtml = QStringLiteral(
+            "<img src='%1' style='width:96px; height:96px; border-radius:12px;"
+            "object-fit:cover; border:1px solid #c8d9e7; background:#ffffff;'/>")
+                .arg(avatarUri);
+    } else {
+        avatarHtml = QStringLiteral(
+            "<div style='width:96px; height:96px; border-radius:12px;"
+            "display:flex; align-items:center; justify-content:center;"
+            "border:1px solid #c8d9e7; background:#f1f5f9; color:#64748b;"
+            "font-size:12px; font-weight:700;'>无照片</div>");
+    }
+
+    QString titleText = employeeName.isEmpty()
+                            ? QStringLiteral("员工信息")
+                            : escapedHtml(employeeName);
+    QString subtitleText = employeeId.isEmpty()
+                               ? QStringLiteral("工号未识别")
+                               : QStringLiteral("工号 %1").arg(escapedHtml(employeeId));
+    QString planBadge;
+    if (!plan.isEmpty()) {
+        planBadge = QStringLiteral(
+                       "<span style='display:inline-block; margin-top:6px;"
+                       "padding:3px 10px; border-radius:999px; background:#e0f2fe;"
+                       "color:#075985; font-size:12px; font-weight:700;'>%1</span>")
+                       .arg(escapedHtml(plan));
+    }
+
+    QString tableRows;
+    for (int i = 0; i < rows.size(); ++i) {
+        tableRows += fieldRowHtml(rows.at(i));
+    }
+
+    return QStringLiteral(
+               "<div style='border:1px solid #c9d9e6; border-radius:10px;"
+               "background:#ffffff; overflow:hidden;'>"
+               "<div style='display:flex; gap:12px; align-items:flex-start;"
+               "padding:12px; background:#f8fbff; border-bottom:1px solid #e2e8f0;'>"
+               "<div>%1</div>"
+               "<div style='flex:1;'>"
+               "<div style='color:#0f172a; font-size:19px; font-weight:800;'>%2</div>"
+               "<div style='margin-top:2px; color:#475569; font-size:13px;'>%3</div>"
+               "%4"
+               "</div>"
+               "<div style='min-width:168px;'>%5</div>"
+               "</div>"
+               "<table cellspacing='0' cellpadding='0' style='width:100%; border-collapse:collapse;'>%6</table>"
+               "</div>")
+        .arg(avatarHtml)
+        .arg(titleText)
+        .arg(subtitleText)
+        .arg(planBadge)
+        .arg(salaryBadge)
+        .arg(tableRows);
 }
 
 const char* feedbackState(FeedbackKind kind) {
@@ -401,10 +607,9 @@ public:
         QTabWidget* tabs = new QTabWidget(this);
         tabs->setObjectName(QStringLiteral("mainTabs"));
         tabs->addTab(createConnectionPage(), QStringLiteral("连接与同步"));
-        tabs->addTab(createEmployeeTab(), QStringLiteral("员工"));
+        tabs->addTab(createEmployeeTab(), QStringLiteral("注册与更新"));
         tabs->addTab(createAttendanceTab(), QStringLiteral("打卡"));
-        tabs->addTab(createFaceQueryTab(), QStringLiteral("刷脸查询"));
-        tabs->addTab(createPlanTab(), QStringLiteral("计划与删除"));
+        tabs->addTab(createQueryTab(), QStringLiteral("查询"));
         tabs->addTab(createLogBox(), QStringLiteral("操作日志"));
         root->addWidget(tabs, 1);
 
@@ -490,6 +695,152 @@ private:
         return page;
     }
 
+    QWidget* createQueryTab() {
+        QWidget* page = new QWidget(this);
+        QVBoxLayout* layout = new QVBoxLayout(page);
+
+        QGroupBox* verifyBox = new QGroupBox(QStringLiteral("身份验证与信息展示"), page);
+        QVBoxLayout* verifyLayout = new QVBoxLayout(verifyBox);
+        verifiedIdentityLabel_ =
+            new QLabel(QStringLiteral("当前未验证身份，请先刷脸后再进行查询或敏感操作"), verifyBox);
+        verifiedIdentityLabel_->setObjectName(QStringLiteral("syncHint"));
+
+        QHBoxLayout* verifyButtons = new QHBoxLayout;
+        QPushButton* verifyAndQueryButton =
+            actionButton(QStringLiteral("刷脸验证并查询信息"), QStyle::SP_ComputerIcon,
+                         verifyBox, "accent");
+        QPushButton* clearVerifiedButton =
+            actionButton(QStringLiteral("清除当前验证"), QStyle::SP_DialogResetButton,
+                         verifyBox);
+        verifyButtons->addWidget(verifyAndQueryButton);
+        verifyButtons->addWidget(clearVerifiedButton);
+        verifyButtons->addStretch(1);
+
+        queryProfileEdit_ = new QTextEdit(verifyBox);
+        queryProfileEdit_->setReadOnly(true);
+        queryProfileEdit_->setMinimumHeight(420);
+        queryProfileEdit_->setPlaceholderText(
+            QStringLiteral("刷脸成功后会在这里展示工资和员工基本信息"));
+
+        connect(verifyAndQueryButton, &QPushButton::clicked, this, [this]() {
+            resetVerifiedIdentity();
+            const std::string host = currentHost();
+            const int port = currentPort();
+            runCameraTask(QStringLiteral("刷脸验证并查询信息"), [this, host, port]() {
+                std::string id;
+                std::string faceMessage;
+                double score = 0.0;
+                if (!recognizeFaceWithDialog(id, score, faceMessage)) {
+                    throw std::runtime_error(faceMessage);
+                }
+                std::string response =
+                    face::sendClientRequest(host, port, "CLIENT_QUERY|" + id + "||");
+                setVerifiedIdentity(id, response);
+                return faceMessage + "\n" + response;
+            }, false);
+        });
+
+        connect(clearVerifiedButton, &QPushButton::clicked, this, [this]() {
+            resetVerifiedIdentity();
+        });
+
+        verifyLayout->addWidget(verifiedIdentityLabel_);
+        verifyLayout->addLayout(verifyButtons);
+        verifyLayout->addWidget(queryProfileEdit_, 1);
+
+        querySecureBox_ =
+            new QGroupBox(QStringLiteral("敏感操作（需先刷脸验证）"), page);
+        querySecureBox_->setMaximumHeight(170);
+        QVBoxLayout* secureLayout = new QVBoxLayout(querySecureBox_);
+        QLabel* secureHint = new QLabel(
+            QStringLiteral("先点击“刷脸验证并查询信息”，确认身份后才允许切换计划或删除员工。"),
+            querySecureBox_);
+        secureHint->setObjectName(QStringLiteral("syncHint"));
+
+        QHBoxLayout* secureButtons = new QHBoxLayout;
+        queryHardworkButton_ =
+            actionButton(QStringLiteral("加入激励计划"), QStyle::SP_ArrowUp,
+                         querySecureBox_, "primary");
+        queryNormalButton_ =
+            actionButton(QStringLiteral("退出激励计划"), QStyle::SP_ArrowDown,
+                         querySecureBox_);
+        queryDeleteButton_ =
+            actionButton(QStringLiteral("删除员工"), QStyle::SP_TrashIcon,
+                         querySecureBox_, "danger");
+        secureButtons->addWidget(queryHardworkButton_);
+        secureButtons->addWidget(queryNormalButton_);
+        secureButtons->addWidget(queryDeleteButton_);
+        secureButtons->addStretch(1);
+
+        connect(queryHardworkButton_, &QPushButton::clicked, this, [this]() {
+            if (verifiedEmployeeId_.empty()) return;
+
+            const std::string id = verifiedEmployeeId_;
+            const std::string host = currentHost();
+            const int port = currentPort();
+            runTask(QStringLiteral("加入激励计划"), [host, port, id]() {
+                std::string switchResult = face::sendClientRequest(
+                    host, port, "CLIENT_HARDWORK|" + id + "||");
+                std::string queryResult = face::sendClientRequest(
+                    host, port, "CLIENT_QUERY|" + id + "||");
+                return switchResult + "\n" + queryResult;
+            }, true, [this](bool ok, const QString& result) {
+                if (!ok) return;
+                updateVerifiedProfileText(result);
+            });
+        });
+
+        connect(queryNormalButton_, &QPushButton::clicked, this, [this]() {
+            if (verifiedEmployeeId_.empty()) return;
+
+            const std::string id = verifiedEmployeeId_;
+            const std::string host = currentHost();
+            const int port = currentPort();
+            runTask(QStringLiteral("退出激励计划"), [host, port, id]() {
+                std::string switchResult = face::sendClientRequest(
+                    host, port, "CLIENT_NORMAL|" + id + "||");
+                std::string queryResult = face::sendClientRequest(
+                    host, port, "CLIENT_QUERY|" + id + "||");
+                return switchResult + "\n" + queryResult;
+            }, true, [this](bool ok, const QString& result) {
+                if (!ok) return;
+                updateVerifiedProfileText(result);
+            });
+        });
+
+        connect(queryDeleteButton_, &QPushButton::clicked, this, [this]() {
+            if (verifiedEmployeeId_.empty()) return;
+            if (QMessageBox::question(this, QStringLiteral("确认删除"),
+                                      QStringLiteral("确认删除当前已验证员工全部信息？")) !=
+                QMessageBox::Yes) {
+                return;
+            }
+
+            const std::string id = verifiedEmployeeId_;
+            const std::string host = currentHost();
+            const int port = currentPort();
+            runTask(QStringLiteral("删除员工"), [host, port, id]() {
+                return face::sendClientRequest(host, port, "CLIENT_DELETE|" + id + "||");
+            }, true, [this, id](bool ok, const QString&) {
+                if (!ok) return;
+                resetVerifiedIdentity();
+                if (queryProfileEdit_) {
+                    queryProfileEdit_->setPlainText(
+                        QStringLiteral("已删除工号 %1 的全部记录。")
+                            .arg(QString::fromStdString(id)));
+                }
+            });
+        });
+
+        secureLayout->addWidget(secureHint);
+        secureLayout->addLayout(secureButtons);
+
+        layout->addWidget(verifyBox, 4);
+        layout->addWidget(querySecureBox_, 1);
+        resetVerifiedIdentity();
+        return page;
+    }
+
     QWidget* createConnectionBox() {
         QGroupBox* box = new QGroupBox(QStringLiteral("服务器连接"), this);
         QHBoxLayout* layout = new QHBoxLayout(box);
@@ -522,7 +873,7 @@ private:
                 std::string response =
                     face::sendClientRequest(host, port, "CLIENT_PING|||");
                 return response;
-            });
+            }, false);
             syncServerDateTime(false);
         });
 
@@ -704,38 +1055,6 @@ private:
         faceLayout->addWidget(identifyButton);
         faceLayout->addWidget(salaryButton);
         faceLayout->addStretch(1);
-
-        QGroupBox* planBox = new QGroupBox(QStringLiteral("激励计划"), page);
-        QFormLayout* planForm = new QFormLayout(planBox);
-        planIdEdit_ = new QLineEdit(planBox);
-        planIdEdit_->setPlaceholderText(QStringLiteral("输入需要确认的员工工号"));
-        planForm->addRow(QStringLiteral("目标工号"), planIdEdit_);
-
-        QHBoxLayout* planButtons = new QHBoxLayout;
-        QPushButton* hardworkButton =
-            actionButton(QStringLiteral("加入激励计划"), QStyle::SP_ArrowUp,
-                         planBox, "primary");
-        QPushButton* normalButton =
-            actionButton(QStringLiteral("退出激励计划"), QStyle::SP_ArrowDown,
-                         planBox);
-        planButtons->addWidget(hardworkButton);
-        planButtons->addWidget(normalButton);
-        planButtons->addStretch(1);
-        planForm->addRow(planButtons);
-
-        QGroupBox* deleteBox = new QGroupBox(QStringLiteral("删除员工"), page);
-        QFormLayout* deleteForm = new QFormLayout(deleteBox);
-        deleteIdEdit_ = new QLineEdit(deleteBox);
-        deleteIdEdit_->setPlaceholderText(QStringLiteral("输入需要删除的员工工号"));
-        deleteForm->addRow(QStringLiteral("目标工号"), deleteIdEdit_);
-
-        QHBoxLayout* deleteButtons = new QHBoxLayout;
-        QPushButton* deleteButton =
-            actionButton(QStringLiteral("删除员工"), QStyle::SP_TrashIcon,
-                         deleteBox, "danger");
-        deleteButtons->addWidget(deleteButton);
-        deleteButtons->addStretch(1);
-        deleteForm->addRow(deleteButtons);
 
         connect(identifyButton, &QPushButton::clicked, this, [this]() {
             runCameraTask(QStringLiteral("识别人脸"), [this]() {
@@ -980,16 +1299,15 @@ private:
                 if (manual || !ok) {
                     FeedbackKind kind = ok ? FeedbackSuccess : FeedbackError;
                     self->appendFeedback(QStringLiteral("同步服务端日期与时间"), text, kind);
-                    if (manual) {
-                        self->showResultDialog(QStringLiteral("同步服务端日期与时间"),
-                                               text, kind);
-                    }
                 }
             }, Qt::QueuedConnection);
         }).detach();
     }
 
-    void runTask(const QString& title, std::function<std::string()> task) {
+    void runTask(const QString& title, std::function<std::string()> task,
+                 bool showDialog = true,
+                 std::function<void(bool, const QString&)> completion =
+                     std::function<void(bool, const QString&)>()) {
         if (busy_) {
             QMessageBox::information(this, QStringLiteral("正在执行"),
                                      QStringLiteral("请等待当前操作完成"));
@@ -1002,7 +1320,7 @@ private:
 
         QPointer<ClientWindow> self(this);
         QCoreApplication* app = QCoreApplication::instance();
-        std::thread([self, app, title, task]() {
+        std::thread([self, app, title, task, showDialog, completion]() {
             bool ok = true;
             std::string result;
             try {
@@ -1016,19 +1334,28 @@ private:
             }
 
             if (!app) return;
-            QMetaObject::invokeMethod(app, [self, title, ok, result]() {
+            QMetaObject::invokeMethod(
+                app, [self, title, ok, result, showDialog, completion]() {
                 if (!self) return;
                 FeedbackKind kind = self->classifyFeedback(ok, result);
+                const QString resultText = toQString(result);
                 self->appendFeedback(title, toQString(result), kind);
                 self->setStatus(feedbackText(kind) + QStringLiteral("：") + title,
                                 feedbackState(kind));
-                self->showResultDialog(title, toQString(result), kind);
+                if (showDialog) {
+                    self->showResultDialog(title, resultText, kind);
+                }
+                if (completion) {
+                    completion(kind != FeedbackError, resultText);
+                }
                 self->setBusy(false);
-            }, Qt::QueuedConnection);
+            },
+                Qt::QueuedConnection);
         }).detach();
     }
 
-    void runCameraTask(const QString& title, std::function<std::string()> task) {
+    void runCameraTask(const QString& title, std::function<std::string()> task,
+                       bool showSuccessDialog = true) {
         if (busy_) {
             QMessageBox::information(this, QStringLiteral("正在执行"),
                                      QStringLiteral("请等待当前操作完成"));
@@ -1055,7 +1382,9 @@ private:
         appendFeedback(title, toQString(result), kind);
         setStatus(feedbackText(kind) + QStringLiteral("：") + title,
                   feedbackState(kind));
-        showResultDialog(title, toQString(result), kind);
+        if (kind != FeedbackSuccess || showSuccessDialog) {
+            showResultDialog(title, toQString(result), kind);
+        }
         setBusy(false);
     }
 
@@ -1077,6 +1406,49 @@ private:
             return FeedbackWarning;
         }
         return FeedbackSuccess;
+    }
+
+    void setSensitiveButtonsEnabled(bool enabled) {
+        if (queryHardworkButton_) queryHardworkButton_->setEnabled(enabled);
+        if (queryNormalButton_) queryNormalButton_->setEnabled(enabled);
+        if (queryDeleteButton_) queryDeleteButton_->setEnabled(enabled);
+    }
+
+    void resetVerifiedIdentity() {
+        verifiedEmployeeId_.clear();
+        if (verifiedIdentityLabel_) {
+            verifiedIdentityLabel_->setText(
+                QStringLiteral("当前未验证身份，请先刷脸后再进行查询或敏感操作"));
+        }
+        if (queryProfileEdit_) {
+            queryProfileEdit_->clear();
+            queryProfileEdit_->setPlaceholderText(
+                QStringLiteral("刷脸成功后会在这里展示工资和员工基本信息"));
+        }
+        setSensitiveButtonsEnabled(false);
+        if (querySecureBox_) querySecureBox_->setVisible(false);
+    }
+
+    void setVerifiedIdentity(const std::string& employeeId,
+                             const std::string& profileText) {
+        verifiedEmployeeId_ = employeeId;
+        if (verifiedIdentityLabel_) {
+            verifiedIdentityLabel_->setText(
+                QStringLiteral("已验证身份：工号 %1，可执行计划切换和删除操作")
+                    .arg(QString::fromStdString(employeeId)));
+        }
+        if (queryProfileEdit_) {
+            QString profileLine = extractProfileText(toQString(profileText));
+            queryProfileEdit_->setHtml(queryProfileHtml(profileLine));
+        }
+        setSensitiveButtonsEnabled(true);
+        if (querySecureBox_) querySecureBox_->setVisible(true);
+    }
+
+    void updateVerifiedProfileText(const QString& mixedResult) {
+        if (!queryProfileEdit_) return;
+        QString profileLine = extractProfileText(mixedResult);
+        queryProfileEdit_->setHtml(queryProfileHtml(profileLine));
     }
 
     void showResultDialog(const QString& title, const QString& body, FeedbackKind kind) {
@@ -1157,6 +1529,13 @@ private:
     QTimeEdit* markTimeEdit_;
     QLineEdit* planIdEdit_;
     QLineEdit* deleteIdEdit_;
+    QLabel* verifiedIdentityLabel_;
+    QTextEdit* queryProfileEdit_;
+    QGroupBox* querySecureBox_;
+    QPushButton* queryHardworkButton_;
+    QPushButton* queryNormalButton_;
+    QPushButton* queryDeleteButton_;
+    std::string verifiedEmployeeId_;
     std::vector<QPushButton*> actionButtons_;
 };
 

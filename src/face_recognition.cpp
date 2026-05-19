@@ -24,7 +24,7 @@ const int SAMPLE_INTERVAL_FRAMES = 6;
 const int ENROLL_SAMPLE_COUNT = 5;
 const int RECOGNIZE_SAMPLE_COUNT = 3;
 const int MIN_MATCH_VOTES = 2;
-const double MATCH_THRESHOLD = 82.0;
+const double MATCH_THRESHOLD = 80.0;
 
 struct MatchVote {
     int count;

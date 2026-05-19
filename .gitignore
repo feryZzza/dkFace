@@ -2,3 +2,5 @@ build/
 .vscode/
 .agents/
 .codex
+.cache/
+
