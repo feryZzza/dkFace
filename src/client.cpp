@@ -118,7 +118,34 @@ bool isSensitiveRequest(const std::string& request) {
            type == "CLIENT_LIST";
 }
 
-bool confirmFaceForEmployee(const std::string& expectedId,
+std::string sendRequestToServer(const std::string& host, int port,
+                                const std::string& request);
+
+bool captureFacePayload(int sampleCount, std::string& payload, std::string& message) {
+    std::vector<cv::Mat> samples;
+    if (!captureFaceSamplesForNetwork(sampleCount, samples, message)) return false;
+    return encodeFaceSamplesForNetwork(samples, payload, message);
+}
+
+bool identifyFaceByServer(const std::string& host, int port, std::string& employeeId,
+                          std::string& message) {
+    std::string payload;
+    if (!captureFacePayload(recognizeFaceSampleCount(), payload, message)) return false;
+
+    std::string response =
+        sendRequestToServer(host, port, "CLIENT_FACE_IDENTIFY|||" + payload);
+    std::vector<std::string> fields = split(response, '|');
+    if (fields.size() < 4 || fields[0] != "FACE_OK") {
+        message = fields.size() >= 4 ? fields[3] : response;
+        return false;
+    }
+    employeeId = trim(fields[1]);
+    message = trim(fields[3]);
+    return true;
+}
+
+bool confirmFaceForEmployee(const std::string& host, int port,
+                            const std::string& expectedId,
                             const std::string& actionName,
                             std::string& confirmedId) {
     if (expectedId.empty()) {
@@ -129,8 +156,7 @@ bool confirmFaceForEmployee(const std::string& expectedId,
     std::cout << "请正对摄像头，刷脸确认" << actionName << "，按 Esc 可取消。"
               << std::endl;
     std::string message;
-    double score = 0.0;
-    if (!recognizeFace(confirmedId, score, message)) {
+    if (!identifyFaceByServer(host, port, confirmedId, message)) {
         std::cout << message << std::endl;
         return false;
     }
@@ -145,7 +171,8 @@ bool confirmFaceForEmployee(const std::string& expectedId,
     return true;
 }
 
-BuiltRequest requestFromClientCommand(const std::string& commandLine) {
+BuiltRequest requestFromClientCommand(const std::string& host, int port,
+                                      const std::string& commandLine) {
     std::istringstream input(commandLine);
     std::string command;
     input >> command;
@@ -200,7 +227,7 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
         std::string id;
         input >> id;
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "加入激励计划", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "加入激励计划", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_HARDWORK|" + confirmedId + "||");
@@ -209,7 +236,7 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
         std::string id;
         input >> id;
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "退出激励计划", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "退出激励计划", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_NORMAL|" + confirmedId + "||");
@@ -218,7 +245,7 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
         std::string id;
         input >> id;
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "删除员工", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "删除员工", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_DELETE|" + confirmedId + "||");
@@ -234,12 +261,12 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
         input >> id >> name;
 
         std::string message;
-        if (!enrollFace(id, message)) {
+        std::string payload;
+        if (!captureFacePayload(enrollFaceSampleCount(), payload, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
-        std::cout << message << std::endl;
-        return readyCommand("CLIENT_REGISTER|" + id + "|" + name + "|");
+        return readyCommand("CLIENT_FACE_REGISTER|" + id + "|" + name + "|" + payload);
     }
     if (command == "face_mark") {
         std::string timeText;
@@ -257,10 +284,9 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
             return failedCommand();
         }
 
-        std::string id;
         std::string message;
-        double score = 0.0;
-        if (!recognizeFace(id, score, message)) {
+        std::string id;
+        if (!identifyFaceByServer(host, port, id, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
@@ -268,10 +294,9 @@ BuiltRequest requestFromClientCommand(const std::string& commandLine) {
         return readyCommand(markRequest(id, "", timeText));
     }
     if (command == "face_query") {
-        std::string id;
         std::string message;
-        double score = 0.0;
-        if (!recognizeFace(id, score, message)) {
+        std::string id;
+        if (!identifyFaceByServer(host, port, id, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
@@ -297,7 +322,8 @@ void printMenu() {
         << "==================================\n";
 }
 
-BuiltRequest requestFromMenuChoice(const std::string& choice) {
+BuiltRequest requestFromMenuChoice(const std::string& host, int port,
+                                   const std::string& choice) {
     std::string id;
     std::string name;
     std::string timeText;
@@ -321,14 +347,14 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
         name = promptLine("姓名(可空): ");
 
         std::string message;
+        std::string payload;
         std::cout << "请正对摄像头，检测成功后会自动保存人脸模板，按 Esc 可取消。"
                   << std::endl;
-        if (!enrollFace(id, message)) {
+        if (!captureFacePayload(enrollFaceSampleCount(), payload, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
-        std::cout << message << std::endl;
-        return readyCommand("CLIENT_REGISTER|" + id + "|" + name + "|");
+        return readyCommand("CLIENT_FACE_REGISTER|" + id + "|" + name + "|" + payload);
     }
 
     if (choice == "4") {
@@ -336,10 +362,9 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
         if (!validOptionalTime(timeText)) return failedCommand();
 
         std::string message;
-        double score = 0.0;
         std::cout << "请正对摄像头，识别成功后会自动打卡，按 Esc 可取消。"
                   << std::endl;
-        if (!recognizeFace(id, score, message)) {
+        if (!identifyFaceByServer(host, port, id, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
@@ -349,10 +374,9 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
 
     if (choice == "5") {
         std::string message;
-        double score = 0.0;
         std::cout << "请正对摄像头，识别成功后会自动查询工资，按 Esc 可取消。"
                   << std::endl;
-        if (!recognizeFace(id, score, message)) {
+        if (!identifyFaceByServer(host, port, id, message)) {
             std::cout << message << std::endl;
             return failedCommand();
         }
@@ -363,7 +387,7 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
     if (choice == "6") {
         if (!promptRequired("工号: ", id)) return failedCommand();
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "加入激励计划", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "加入激励计划", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_HARDWORK|" + confirmedId + "||");
@@ -372,7 +396,7 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
     if (choice == "7") {
         if (!promptRequired("工号: ", id)) return failedCommand();
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "退出激励计划", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "退出激励计划", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_NORMAL|" + confirmedId + "||");
@@ -386,7 +410,7 @@ BuiltRequest requestFromMenuChoice(const std::string& choice) {
             return failedCommand();
         }
         std::string confirmedId;
-        if (!confirmFaceForEmployee(id, "删除员工", confirmedId)) {
+        if (!confirmFaceForEmployee(host, port, id, "删除员工", confirmedId)) {
             return failedCommand();
         }
         return readyCommand("CLIENT_DELETE|" + confirmedId + "||");
@@ -506,9 +530,9 @@ int runClient(const std::string& host, int port) {
         }
         if (line.empty()) continue;
 
-        BuiltRequest built = requestFromMenuChoice(line);
+        BuiltRequest built = requestFromMenuChoice(host, port, line);
         if (!built.known) {
-            built = requestFromClientCommand(line);
+            built = requestFromClientCommand(host, port, line);
         }
         if (!built.known) {
             std::cout << "无效选择，请输入菜单编号" << std::endl;
@@ -526,7 +550,7 @@ int runClient(const std::string& host, int port) {
 }
 
 int runClientOnce(const std::string& host, int port, const std::string& commandLine) {
-    BuiltRequest built = requestFromClientCommand(commandLine);
+    BuiltRequest built = requestFromClientCommand(host, port, commandLine);
     if (!built.known) {
         std::cerr << "未知客户端命令: " << commandLine << std::endl;
         return 1;

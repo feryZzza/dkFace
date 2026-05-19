@@ -1,4 +1,5 @@
 #include "../include/attendance.hpp"
+#include "../include/face_recognition.hpp"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -18,8 +19,6 @@ namespace face {
 namespace {
 
 const int MAX_ABSENCES = 5;
-const char* DATA_FILE = "kaoqin.csv";
-const char* PHOTO_DIR = "photos";
 
 // CSV 中保存的员工状态。普通计划和激励计划的奖惩分开累计：
 // 普通计划固定按勤奋+500、缺勤-300结算；激励计划固定按+500/-1000结算。
@@ -62,6 +61,7 @@ struct Request {
     std::string id;
     std::string name;
     std::string timeText;
+    std::string payload;
 };
 
 std::mutex g_dataMutex;
@@ -73,6 +73,15 @@ std::string trim(const std::string& value) {
     if (first == std::string::npos) return "";
     std::size_t last = value.find_last_not_of(" \t\r\n");
     return value.substr(first, last - first + 1);
+}
+
+void ensureDataDir() {
+    std::string dataDir = faceDataRootDir();
+    mkdir(dataDir.c_str(), 0755);
+}
+
+std::string dataFilePath() {
+    return faceDataRootDir() + "/employees.csv";
 }
 
 std::vector<std::string> split(const std::string& value, char delimiter) {
@@ -159,6 +168,9 @@ Request parseRequest(const std::string& line) {
     } else if (fields.size() > 3) {
         request.timeText = trim(fields[3]);
     }
+    if (fields.size() > 4) {
+        request.payload = trim(fields[4]);
+    }
     return request;
 }
 
@@ -204,8 +216,9 @@ int& currentDiligentCount(Employee& employee) {
 }
 
 std::map<std::string, Employee> loadEmployees() {
+    ensureDataDir();
     std::map<std::string, Employee> employees;
-    std::ifstream input(DATA_FILE);
+    std::ifstream input(dataFilePath().c_str());
     std::string line;
 
     std::getline(input, line);  // header
@@ -241,7 +254,8 @@ std::map<std::string, Employee> loadEmployees() {
 }
 
 void saveEmployees(const std::map<std::string, Employee>& employees) {
-    std::ofstream output(DATA_FILE);
+    ensureDataDir();
+    std::ofstream output(dataFilePath().c_str());
     output << "employee_id,name,absence_count,remedy_count,diligent_count,"
            << "base_salary,plan,last_date,last_time,"
            << "normal_absence_count,normal_remedy_count,normal_diligent_count,"
@@ -324,6 +338,45 @@ std::string handleRegister(std::map<std::string, Employee>& employees,
     Employee& employee = findOrCreateEmployee(employees, request);
     employee.baseSalary = policyFor(employee).baseSalary;
     return "员工注册/更新成功：" + employeeSummary(employee);
+}
+
+std::string handleFaceRegister(std::map<std::string, Employee>& employees,
+                               const Request& request) {
+    if (request.id.empty()) return "人脸注册失败：工号不能为空";
+    if (request.timeText.empty()) return "人脸注册失败：缺少人脸样本数据";
+
+    std::vector<cv::Mat> samples;
+    std::string message;
+    if (!decodeFaceSamplesFromNetwork(request.timeText, samples, message)) {
+        return "人脸注册失败：" + message;
+    }
+    if (!saveFaceEnrollmentSamples(request.id, samples, message)) {
+        return "人脸注册失败：" + message;
+    }
+
+    Employee& employee = findOrCreateEmployee(employees, request);
+    employee.baseSalary = policyFor(employee).baseSalary;
+    return "人脸与员工信息已保存：" + employeeSummary(employee);
+}
+
+std::string handleFaceIdentify(const Request& request) {
+    if (request.timeText.empty()) return "FACE_FAIL|||识别失败：缺少人脸样本数据";
+
+    std::vector<cv::Mat> currentFaces;
+    std::string message;
+    if (!decodeFaceSamplesFromNetwork(request.timeText, currentFaces, message)) {
+        return "FACE_FAIL|||" + message;
+    }
+
+    std::string employeeId;
+    double score = 0.0;
+    if (!recognizeFaceSamples(currentFaces, employeeId, score, message)) {
+        return "FACE_FAIL|||" + message;
+    }
+
+    std::ostringstream output;
+    output << "FACE_OK|" << employeeId << '|' << score << '|' << message;
+    return output.str();
 }
 
 std::string handleMark(std::map<std::string, Employee>& employees,
@@ -432,7 +485,8 @@ std::string handleNormal(std::map<std::string, Employee>& employees,
 }
 
 int deleteEmployeePhotos(const std::string& employeeId) {
-    DIR* dir = opendir(PHOTO_DIR);
+    const std::string photoDir = faceStorageRootDir();
+    DIR* dir = opendir(photoDir.c_str());
     if (!dir) return 0;
 
     int removed = 0;
@@ -441,7 +495,7 @@ int deleteEmployeePhotos(const std::string& employeeId) {
         if (name == "." || name == "..") continue;
         if (name.find(employeeId) != 0) continue;
 
-        std::string path = std::string(PHOTO_DIR) + "/" + name;
+        std::string path = photoDir + "/" + name;
         struct stat info;
         if (stat(path.c_str(), &info) != 0) continue;
 
@@ -605,6 +659,11 @@ std::string processRequest(const std::string& line) {
     if (request.type == "CLIENT_REGISTER") {
         response = handleRegister(employees, request);
         changed = true;
+    } else if (request.type == "CLIENT_FACE_REGISTER") {
+        response = handleFaceRegister(employees, request);
+        changed = response.find("人脸与员工信息已保存") == 0;
+    } else if (request.type == "CLIENT_FACE_IDENTIFY") {
+        response = handleFaceIdentify(request);
     } else if (request.type == "CLIENT_MARK") {
         response = handleMark(employees, request);
         changed = true;
@@ -625,7 +684,7 @@ std::string processRequest(const std::string& line) {
         response = "请求失败：未知消息类型 " + request.type;
     }
 
-    // 查询和列表不会修改数据，其它消息处理后写回 kaoqin.csv。
+    // 查询和列表不会修改数据，其它消息处理后写回 data/employees.csv。
     if (changed) saveEmployees(employees);
     return response;
 }

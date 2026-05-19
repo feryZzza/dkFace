@@ -60,6 +60,23 @@ std::string toStdString(const QString& text) {
     return text.trimmed().toUtf8().constData();
 }
 
+std::string trim(const std::string& value) {
+    std::size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return "";
+    std::size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::vector<std::string> split(const std::string& value, char delimiter) {
+    std::vector<std::string> parts;
+    std::string current;
+    std::istringstream input(value);
+    while (std::getline(input, current, delimiter)) {
+        parts.push_back(current);
+    }
+    return parts;
+}
+
 QString escapedHtml(const QString& text) {
     return text.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>"));
 }
@@ -130,8 +147,8 @@ QString fieldValue(const QStringList& fields, const QString& prefix) {
 QString avatarDataUri(const QString& employeeId) {
     if (employeeId.isEmpty()) return QString();
 
-    const QString path = QDir::current().filePath(
-        QStringLiteral("photos/%1.png").arg(employeeId));
+    const QString path =
+        QString::fromStdString(face::faceStorageRootDir()) + "/" + employeeId + ".png";
     if (!QFileInfo::exists(path)) return QString();
 
     QImage image(path);
@@ -729,8 +746,7 @@ private:
             runCameraTask(QStringLiteral("刷脸验证并查询信息"), [this, host, port]() {
                 std::string id;
                 std::string faceMessage;
-                double score = 0.0;
-                if (!recognizeFaceWithDialog(id, score, faceMessage)) {
+                if (!identifyFaceByServerWithDialog(id, faceMessage)) {
                     throw std::runtime_error(faceMessage);
                 }
                 std::string response =
@@ -951,16 +967,12 @@ private:
             std::string id;
             if (!requireValue(employeeIdEdit_, QStringLiteral("工号"), id)) return;
             const std::string name = toStdString(employeeNameEdit_->text());
-            const std::string host = currentHost();
-            const int port = currentPort();
-            runCameraTask(QStringLiteral("录入人脸并注册"), [this, host, port, id, name]() {
+            runCameraTask(QStringLiteral("录入人脸并注册"), [this, id, name]() {
                 std::string faceMessage;
-                if (!enrollFaceWithDialog(id, faceMessage)) {
+                if (!registerFaceByServerWithDialog(id, name, faceMessage)) {
                     throw std::runtime_error(faceMessage);
                 }
-                std::string response =
-                    face::sendClientRequest(host, port, registerRequest(id, name));
-                return faceMessage + "\n" + response;
+                return faceMessage;
             });
         });
 
@@ -1025,8 +1037,7 @@ private:
             runCameraTask(QStringLiteral("刷脸打卡"), [this, host, port, timeText]() {
                 std::string id;
                 std::string faceMessage;
-                double score = 0.0;
-                if (!recognizeFaceWithDialog(id, score, faceMessage)) {
+                if (!identifyFaceByServerWithDialog(id, faceMessage)) {
                     throw std::runtime_error(faceMessage);
                 }
                 std::string response =
@@ -1060,8 +1071,7 @@ private:
             runCameraTask(QStringLiteral("识别人脸"), [this]() {
                 std::string id;
                 std::string faceMessage;
-                double score = 0.0;
-                if (!recognizeFaceWithDialog(id, score, faceMessage)) {
+                if (!identifyFaceByServerWithDialog(id, faceMessage)) {
                     throw std::runtime_error(faceMessage);
                 }
                 return faceMessage;
@@ -1074,8 +1084,7 @@ private:
             runCameraTask(QStringLiteral("刷脸查询工资"), [this, host, port]() {
                 std::string id;
                 std::string faceMessage;
-                double score = 0.0;
-                if (!recognizeFaceWithDialog(id, score, faceMessage)) {
+                if (!identifyFaceByServerWithDialog(id, faceMessage)) {
                     throw std::runtime_error(faceMessage);
                 }
                 std::string response =
@@ -1216,7 +1225,14 @@ private:
         return true;
     }
 
-    bool enrollFaceWithDialog(const std::string& employeeId, std::string& message) {
+    bool registerFaceByServerWithDialog(const std::string& employeeId,
+                                        const std::string& name,
+                                        std::string& message) {
+        if (employeeId.empty()) {
+            message = "录入失败：工号不能为空";
+            return false;
+        }
+
         std::vector<cv::Mat> samples;
         if (!captureFaceSamplesWithDialog(QStringLiteral("录入人脸"),
                                           face::enrollFaceSampleCount(),
@@ -1224,11 +1240,18 @@ private:
             return false;
         }
 
-        return face::saveFaceEnrollmentSamples(employeeId, samples, message);
+        std::string payload;
+        if (!face::encodeFaceSamplesForNetwork(samples, payload, message)) return false;
+
+        std::string host = currentHost();
+        int port = currentPort();
+        message = face::sendClientRequest(host, port,
+                                          "CLIENT_FACE_REGISTER|" + employeeId +
+                                              "|" + name + "|" + payload);
+        return true;
     }
 
-    bool recognizeFaceWithDialog(std::string& employeeId, double& score,
-                                 std::string& message) {
+    bool identifyFaceByServerWithDialog(std::string& employeeId, std::string& message) {
         std::vector<cv::Mat> samples;
         if (!captureFaceSamplesWithDialog(QStringLiteral("识别人脸"),
                                           face::recognizeFaceSampleCount(),
@@ -1236,7 +1259,21 @@ private:
             return false;
         }
 
-        return face::recognizeFaceSamples(samples, employeeId, score, message);
+        std::string payload;
+        if (!face::encodeFaceSamplesForNetwork(samples, payload, message)) return false;
+
+        std::vector<std::string> fields = split(
+            face::sendClientRequest(currentHost(), currentPort(),
+                                    "CLIENT_FACE_IDENTIFY|||" + payload),
+            '|');
+        if (fields.size() < 4 || fields[0] != "FACE_OK") {
+            message = fields.size() >= 4 ? fields[3] : "识别失败：服务器返回格式错误";
+            return false;
+        }
+
+        employeeId = trim(fields[1]);
+        message = trim(fields[3]);
+        return true;
     }
 
     void startProtectedPlanTask(const QString& title, const std::string& requestType,
@@ -1249,8 +1286,7 @@ private:
         runCameraTask(title, [this, host, port, id, requestType, title]() {
             std::string confirmedId;
             std::string faceMessage;
-            double score = 0.0;
-            if (!recognizeFaceWithDialog(confirmedId, score, faceMessage)) {
+            if (!identifyFaceByServerWithDialog(confirmedId, faceMessage)) {
                 throw std::runtime_error(faceMessage);
             }
             if (confirmedId != id) {

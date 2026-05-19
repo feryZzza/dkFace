@@ -2,8 +2,11 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
+#include <climits>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <limits>
 #include <sstream>
@@ -16,7 +19,8 @@
 namespace face {
 namespace {
 
-const char* PHOTO_DIR = "photos";
+const char* DATA_DIR_NAME = "data";
+const char* PHOTO_DIR_NAME = "photos";
 const char* CASCADE_PATH = "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml";
 const int FACE_SIZE = 120;
 const int STABLE_FRAME_COUNT = 8;
@@ -34,12 +38,138 @@ struct MatchVote {
     MatchVote() : count(0), scoreSum(0.0), bestScore(std::numeric_limits<double>::max()) {}
 };
 
+const char* BASE64_CHARS =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789+/";
+
 bool hasDisplay() {
     return std::getenv("DISPLAY") != NULL || std::getenv("WAYLAND_DISPLAY") != NULL;
 }
 
+bool pathExists(const std::string& path) {
+    struct stat info;
+    return stat(path.c_str(), &info) == 0;
+}
+
+bool isDirectory(const std::string& path) {
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0) return false;
+    return S_ISDIR(info.st_mode);
+}
+
+std::string parentDir(const std::string& path) {
+    if (path.empty()) return "";
+    std::size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) return "";
+    if (pos == 0) return "/";
+    return path.substr(0, pos);
+}
+
+std::string joinPath(const std::string& left, const std::string& right) {
+    if (left.empty()) return right;
+    if (left[left.size() - 1] == '/') return left + right;
+    return left + "/" + right;
+}
+
+std::string getWorkingDir() {
+    char buffer[PATH_MAX] = {0};
+    if (!getcwd(buffer, sizeof(buffer))) return "";
+    return std::string(buffer);
+}
+
+std::string getExecutableDir() {
+    char path[PATH_MAX] = {0};
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len <= 0) return "";
+    path[len] = '\0';
+    return parentDir(std::string(path));
+}
+
+std::string findProjectRootFrom(const std::string& startDir) {
+    std::string current = startDir;
+    for (int depth = 0; depth < 10 && !current.empty(); ++depth) {
+        if (pathExists(joinPath(current, "CMakeLists.txt")) &&
+            isDirectory(joinPath(current, "src"))) {
+            return current;
+        }
+        std::string next = parentDir(current);
+        if (next == current) break;
+        current = next;
+    }
+    return "";
+}
+
+std::string resolveProjectRoot() {
+    std::string fromCwd = findProjectRootFrom(getWorkingDir());
+    if (!fromCwd.empty()) return fromCwd;
+
+    std::string fromExe = findProjectRootFrom(getExecutableDir());
+    if (!fromExe.empty()) return fromExe;
+
+    return getWorkingDir();
+}
+
+std::string dataDirPath() {
+    return joinPath(resolveProjectRoot(), DATA_DIR_NAME);
+}
+
+std::string photoDirPath() {
+    return joinPath(dataDirPath(), PHOTO_DIR_NAME);
+}
+
 void ensurePhotoDir() {
-    mkdir(PHOTO_DIR, 0755);
+    std::string dataDir = dataDirPath();
+    std::string photoDir = photoDirPath();
+    mkdir(dataDir.c_str(), 0755);
+    mkdir(photoDir.c_str(), 0755);
+}
+
+std::string base64Encode(const std::vector<unsigned char>& data) {
+    std::string encoded;
+    encoded.reserve(((data.size() + 2) / 3) * 4);
+
+    unsigned int value = 0;
+    int valb = -6;
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        value = (value << 8) + data[i];
+        valb += 8;
+        while (valb >= 0) {
+            encoded.push_back(BASE64_CHARS[(value >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) {
+        encoded.push_back(BASE64_CHARS[((value << 8) >> (valb + 8)) & 0x3F]);
+    }
+    while (encoded.size() % 4 != 0) encoded.push_back('=');
+    return encoded;
+}
+
+bool base64Decode(const std::string& text, std::vector<unsigned char>& data) {
+    int reverseTable[256];
+    std::memset(reverseTable, -1, sizeof(reverseTable));
+    for (int i = 0; i < 64; ++i) {
+        reverseTable[static_cast<unsigned char>(BASE64_CHARS[i])] = i;
+    }
+
+    data.clear();
+    unsigned int value = 0;
+    int valb = -8;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
+        if (ch == '=') break;
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') continue;
+        if (reverseTable[ch] < 0) return false;
+
+        value = (value << 6) + static_cast<unsigned int>(reverseTable[ch]);
+        valb += 6;
+        if (valb >= 0) {
+            data.push_back(static_cast<unsigned char>((value >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return true;
 }
 
 bool ensureDir(const std::string& path, std::string& message) {
@@ -64,17 +194,30 @@ void closeCameraWindow(cv::VideoCapture& camera, bool showWindow) {
 }
 
 std::string templatePath(const std::string& employeeId) {
-    return std::string(PHOTO_DIR) + "/" + employeeId + ".png";
+    return joinPath(photoDirPath(), employeeId + ".png");
 }
 
 std::string sampleDir(const std::string& employeeId) {
-    return std::string(PHOTO_DIR) + "/" + employeeId;
+    return joinPath(photoDirPath(), employeeId);
 }
 
 std::string samplePath(const std::string& employeeId, int index) {
     std::ostringstream output;
     output << sampleDir(employeeId) << "/sample_" << index << ".png";
     return output.str();
+}
+
+std::vector<std::string> split(const std::string& text, char delimiter) {
+    std::vector<std::string> parts;
+    std::string current;
+    std::istringstream input(text);
+    while (std::getline(input, current, delimiter)) {
+        parts.push_back(current);
+    }
+    if (!text.empty() && text[text.size() - 1] == delimiter) {
+        parts.push_back("");
+    }
+    return parts;
 }
 
 std::string fileStem(const std::string& name) {
@@ -253,14 +396,15 @@ void loadSampleDirectory(const std::string& employeeId, const std::string& path,
 
 void loadTrainingSet(std::vector<cv::Mat>& images, std::vector<int>& labels,
                      std::vector<std::string>& employeeIds) {
-    DIR* dir = opendir(PHOTO_DIR);
+    const std::string photoDir = photoDirPath();
+    DIR* dir = opendir(photoDir.c_str());
     if (!dir) return;
 
     for (dirent* entry = readdir(dir); entry; entry = readdir(dir)) {
         std::string name = entry->d_name;
         if (name == "." || name == "..") continue;
 
-        std::string path = std::string(PHOTO_DIR) + "/" + name;
+        std::string path = joinPath(photoDir, name);
         struct stat info;
         if (stat(path.c_str(), &info) != 0) continue;
 
@@ -270,9 +414,18 @@ void loadTrainingSet(std::vector<cv::Mat>& images, std::vector<int>& labels,
             loadSampleDirectory(name, path, images, labels, employeeIds);
         }
     }
+    closedir(dir);
 }
 
 }  // namespace
+
+std::string faceDataRootDir() {
+    return dataDirPath();
+}
+
+std::string faceStorageRootDir() {
+    return photoDirPath();
+}
 
 int enrollFaceSampleCount() {
     return ENROLL_SAMPLE_COUNT;
@@ -280,6 +433,85 @@ int enrollFaceSampleCount() {
 
 int recognizeFaceSampleCount() {
     return RECOGNIZE_SAMPLE_COUNT;
+}
+
+bool captureFaceSamplesForNetwork(int sampleCount, std::vector<cv::Mat>& samples,
+                                  std::string& message) {
+    samples.clear();
+    if (sampleCount <= 0) {
+        message = "采集失败：样本数量必须大于0";
+        return false;
+    }
+    return captureFaceSamples(samples, sampleCount, message);
+}
+
+bool encodeFaceSamplesForNetwork(const std::vector<cv::Mat>& samples,
+                                 std::string& payload, std::string& message) {
+    if (samples.empty()) {
+        message = "编码失败：人脸样本为空";
+        return false;
+    }
+
+    std::ostringstream output;
+    output << samples.size();
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        std::vector<unsigned char> bytes;
+        if (!cv::imencode(".png", samples[i], bytes)) {
+            message = "编码失败：无法压缩人脸样本";
+            return false;
+        }
+        output << ';' << base64Encode(bytes);
+    }
+
+    payload = output.str();
+    message = "编码成功";
+    return true;
+}
+
+bool decodeFaceSamplesFromNetwork(const std::string& payload,
+                                  std::vector<cv::Mat>& samples,
+                                  std::string& message) {
+    std::vector<std::string> parts = split(payload, ';');
+    if (parts.empty() || parts[0].empty()) {
+        message = "解码失败：负载为空";
+        return false;
+    }
+
+    std::istringstream countInput(parts[0]);
+    int expected = 0;
+    countInput >> expected;
+    if (countInput.fail() || expected <= 0) {
+        message = "解码失败：样本数量无效";
+        return false;
+    }
+    if (static_cast<int>(parts.size()) != expected + 1) {
+        message = "解码失败：样本数量与负载不一致";
+        return false;
+    }
+
+    samples.clear();
+    for (int i = 0; i < expected; ++i) {
+        std::vector<unsigned char> bytes;
+        if (!base64Decode(parts[i + 1], bytes)) {
+            message = "解码失败：Base64 数据损坏";
+            return false;
+        }
+
+        cv::Mat raw(1, static_cast<int>(bytes.size()), CV_8UC1,
+                    bytes.empty() ? NULL : &bytes[0]);
+        cv::Mat decoded = cv::imdecode(raw, cv::IMREAD_GRAYSCALE);
+        if (decoded.empty()) {
+            message = "解码失败：无法解析人脸图像";
+            return false;
+        }
+        if (decoded.size() != cv::Size(FACE_SIZE, FACE_SIZE)) {
+            cv::resize(decoded, decoded, cv::Size(FACE_SIZE, FACE_SIZE));
+        }
+        samples.push_back(decoded);
+    }
+
+    message = "解码成功";
+    return true;
 }
 
 bool loadFaceCascadeForCapture(cv::CascadeClassifier& cascade, std::string& message) {

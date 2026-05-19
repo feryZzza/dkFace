@@ -50,12 +50,14 @@ void handleClient(int clientFd, const std::string& peer = "",
     timeout.tv_usec = 0;
     setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
+    std::string request;
     char buffer[4096];
-    ssize_t received = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
-    if (received > 0) {
-        buffer[received] = '\0';
+    ssize_t received = 0;
+    while ((received = recv(clientFd, buffer, sizeof(buffer), 0)) > 0) {
+        request.append(buffer, buffer + received);
+    }
+    if (!request.empty()) {
         // 网络层只负责收发字符串，具体考勤规则交给 attendance 模块处理。
-        std::string request(buffer);
         std::string response = processRequest(request);
         if (!peer.empty()) {
             writeLog(logCallback, "客户端 " + peer + " 请求: " + oneLine(request));
@@ -172,7 +174,7 @@ bool AttendanceTcpServer::start(int port, const std::string& dateOverride,
 
     std::ostringstream output;
     output << "考勤服务器已启动，端口 " << port
-           << "，数据文件 kaoqin.csv，" << dateMessage
+           << "，数据文件 data/employees.csv，" << dateMessage
            << "，" << timeMessage;
     message = output.str();
     log(message);
@@ -275,7 +277,7 @@ int runServer(int port, const std::string& dateOverride,
     }
 
     std::cout << "考勤服务器已启动，端口 " << port
-              << "，数据文件 kaoqin.csv，" << dateMessage
+              << "，数据文件 data/employees.csv，" << dateMessage
               << "，" << timeMessage << std::endl;
     std::cout << "服务端命令：date 2026-MM-DD，time HH:MM，now 2026-MM-DD HH:MM，query 工号，list"
               << std::endl;

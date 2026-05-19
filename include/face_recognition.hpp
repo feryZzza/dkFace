@@ -9,8 +9,17 @@
 
 namespace face {
 
+std::string faceDataRootDir();
+std::string faceStorageRootDir();
 int enrollFaceSampleCount();
 int recognizeFaceSampleCount();
+bool captureFaceSamplesForNetwork(int sampleCount, std::vector<cv::Mat>& samples,
+                                  std::string& message);
+bool encodeFaceSamplesForNetwork(const std::vector<cv::Mat>& samples,
+                                 std::string& payload, std::string& message);
+bool decodeFaceSamplesFromNetwork(const std::string& payload,
+                                  std::vector<cv::Mat>& samples,
+                                  std::string& message);
 bool loadFaceCascadeForCapture(cv::CascadeClassifier& cascade, std::string& message);
 bool findLargestFaceForCapture(const cv::Mat& frame, cv::CascadeClassifier& cascade,
                                cv::Rect& face);
